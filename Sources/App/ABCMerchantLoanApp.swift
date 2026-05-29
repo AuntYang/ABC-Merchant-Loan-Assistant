@@ -1,13 +1,13 @@
-﻿import SwiftUI
+import SwiftUI
 
 @main
 struct ABCMerchantLoanApp: App {
-    let persistenceController = PersistenceController.shared
+    @StateObject private var dataStore = DataStore.shared
     
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .environmentObject(dataStore)
         }
     }
 }
