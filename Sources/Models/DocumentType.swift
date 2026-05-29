@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 
 enum DocumentCategory: String, Codable, CaseIterable {
     case template = "模板表单"
@@ -46,13 +46,13 @@ struct DocumentTypeRegistry {
         DocumentTypeInfo(id: "lease_contract", index: 12, name: "租赁合同", category: .propertyDoc, requiresOCR: false, fileType: .any, description: "商铺租赁合同"),
         DocumentTypeInfo(id: "asset_cert", index: 13, name: "资产证明", category: .propertyDoc, requiresOCR: false, fileType: .any, description: "其他资产证明文件"),
         DocumentTypeInfo(id: "inventory_cert", index: 14, name: "存货证明", category: .propertyDoc, requiresOCR: false, fileType: .image, description: "存货照片或证明"),
-        DocumentTypeInfo(id: "sunshine_letter_customer", index: 15, name: "个人贷款"阳光办贷"告知函-客户", category: .authorization, requiresOCR: false, fileType: .pdf, description: "客户签署"),
-        DocumentTypeInfo(id: "integrity_letter_customer", index: 16, name: ""清廉办贷"告知函-客户", category: .authorization, requiresOCR: false, fileType: .pdf, description: "客户签署"),
+        DocumentTypeInfo(id: "sunshine_letter_customer", index: 15, name: "\u{201c}阳光办贷\u{201d}告知函-客户", category: .authorization, requiresOCR: false, fileType: .pdf, description: "客户签署"),
+        DocumentTypeInfo(id: "integrity_letter_customer", index: 16, name: "\u{201c}清廉办贷\u{201d}告知函-客户", category: .authorization, requiresOCR: false, fileType: .pdf, description: "客户签署"),
         DocumentTypeInfo(id: "credit_auth_customer", index: 17, name: "个人征信业务授权书-客户", category: .authorization, requiresOCR: false, fileType: .pdf, description: "客户签署"),
         DocumentTypeInfo(id: "info_auth_customer", index: 18, name: "信息查询授权书-客户", category: .authorization, requiresOCR: false, fileType: .pdf, description: "客户签署"),
         DocumentTypeInfo(id: "risk_notice_customer", index: 19, name: "风险提示-客户", category: .authorization, requiresOCR: false, fileType: .pdf, description: "客户签署"),
-        DocumentTypeInfo(id: "sunshine_letter_spouse", index: 20, name: "个人贷款"阳光办贷"告知函-配偶", category: .authorization, requiresOCR: false, fileType: .pdf, description: "配偶签署"),
-        DocumentTypeInfo(id: "integrity_letter_spouse", index: 21, name: ""清廉办贷"告知函-配偶", category: .authorization, requiresOCR: false, fileType: .pdf, description: "配偶签署"),
+        DocumentTypeInfo(id: "sunshine_letter_spouse", index: 20, name: "\u{201c}阳光办贷\u{201d}告知函-配偶", category: .authorization, requiresOCR: false, fileType: .pdf, description: "配偶签署"),
+        DocumentTypeInfo(id: "integrity_letter_spouse", index: 21, name: "\u{201c}清廉办贷\u{201d}告知函-配偶", category: .authorization, requiresOCR: false, fileType: .pdf, description: "配偶签署"),
         DocumentTypeInfo(id: "credit_auth_spouse", index: 22, name: "个人征信业务授权书-配偶", category: .authorization, requiresOCR: false, fileType: .pdf, description: "配偶签署"),
         DocumentTypeInfo(id: "info_auth_spouse", index: 23, name: "信息查询授权书-配偶", category: .authorization, requiresOCR: false, fileType: .pdf, description: "配偶签署"),
         DocumentTypeInfo(id: "risk_notice_spouse", index: 24, name: "风险提示-配偶", category: .authorization, requiresOCR: false, fileType: .pdf, description: "配偶签署"),
