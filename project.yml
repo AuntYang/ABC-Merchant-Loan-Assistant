@@ -3,8 +3,6 @@ options:
   bundleIdPrefix: com.abcm
   deploymentTarget:
     iOS: "16.0"
-  xcodeVersion: "15.4"
-  minimumXcodeGenVersion: "2.35.0"
   groupSortPosition: top
 settings:
   base:
