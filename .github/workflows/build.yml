@@ -5,9 +5,12 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     
     steps:
@@ -16,9 +19,6 @@ jobs:
     
     - name: Install XcodeGen
       run: brew install xcodegen
-    
-    - name: Select Xcode
-      run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
     
     - name: Generate Xcode project
       run: xcodegen generate --spec project.yml
@@ -38,43 +38,24 @@ jobs:
           DEVELOPMENT_TEAM="" \
           PROVISIONING_PROFILE_SPECIFIER="" \
           CONFIGURATION_BUILD_DIR="$(pwd)/build/Release-iphoneos" \
-          2>&1 | tail -100
+          2>&1 | tail -50
+    
+    - name: Verify app bundle
+      run: |
+        ls -la "build/Release-iphoneos/ABCMerchantLoan.app/"
+        plutil -p "build/Release-iphoneos/ABCMerchantLoan.app/Info.plist"
     
     - name: Create IPA
       run: |
-        ls -la build/Release-iphoneos/
         mkdir -p Payload
         cp -r "build/Release-iphoneos/ABCMerchantLoan.app" Payload/
-        zip -r "ABC商户贷助手.ipa" Payload
-        ls -la "ABC商户贷助手.ipa"
+        zip -r "ABCMerchantLoan.ipa" Payload
+        ls -la "ABCMerchantLoan.ipa"
     
     - name: Upload IPA artifact
       uses: actions/upload-artifact@v4
       with:
         name: ABCMerchantLoan-IPA
-        path: ABC商户贷助手.ipa
+        path: ABCMerchantLoan.ipa
         retention-days: 90
-    
-    - name: Create Release
-      if: success()
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: v1.0.0-build-${{ github.run_number }}
-        name: ABC商户贷助手 v1.0.0
-        body: |
-          ABC商户贷助手 iOS App
-          
-          安装方法：
-          1. 下载 ABC商户贷助手.ipa 文件
-          2. 使用 Sideloadly 或 AltStore 安装到 iPhone
-          
-          功能：
-          - 客户信息管理
-          - 证件OCR识别
-          - 资料导入（拍照/相册/文件）
-          - PDF资料包生成
-        files: ABC商户贷助手.ipa
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

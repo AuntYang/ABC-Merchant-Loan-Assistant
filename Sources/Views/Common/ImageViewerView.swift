@@ -1,4 +1,4 @@
-﻿import SwiftUI
+import SwiftUI
 
 struct ImageViewerView: View {
     let image: UIImage

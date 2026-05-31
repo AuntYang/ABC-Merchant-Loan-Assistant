@@ -1,4 +1,4 @@
-﻿import SwiftUI
+import SwiftUI
 
 struct CustomerListView: View {
     @StateObject private var viewModel = CustomerViewModel()

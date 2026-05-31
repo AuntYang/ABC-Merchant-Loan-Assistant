@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import Combine
 
 class CustomerViewModel: ObservableObject {

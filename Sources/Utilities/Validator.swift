@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 
 struct Validator {
     static func validatePhoneNumber(_ phone: String) -> (isValid: Bool, message: String) {

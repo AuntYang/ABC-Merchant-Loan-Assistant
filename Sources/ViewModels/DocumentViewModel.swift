@@ -1,6 +1,5 @@
-﻿import Foundation
+import Foundation
 import UIKit
-import PhotosUI
 import SwiftUI
 
 class DocumentViewModel: ObservableObject {
@@ -13,15 +12,13 @@ class DocumentViewModel: ObservableObject {
     
     func saveImage(_ image: UIImage, for customerId: UUID, documentType: String) -> DocumentItem? {
         guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-            errorMessage = "无法处理图片"
+            errorMessage = "\u{65E0}\u{6CD5}\u{5904}\u{7406}\u{56FE}\u{7247}"
             return nil
         }
         
         let fileName = "\(documentType)_\(Date().timeIntervalSince1970).jpg"
         let filePath = dataStore.saveFile(data: imageData, customerId: customerId, documentType: documentType, fileName: fileName)
-        
-        let thumbnail = resizeImage(image, targetSize: CGSize(width: 200, height: 200))
-        let thumbnailData = thumbnail?.jpegData(compressionQuality: 0.5)
+        let thumbnailData = createThumbnail(from: imageData)
         
         return DocumentItem(
             documentType: documentType,
@@ -32,26 +29,9 @@ class DocumentViewModel: ObservableObject {
         )
     }
     
-    func savePDF(_ data: Data, for customerId: UUID, documentType: String, fileName: String) -> DocumentItem? {
-        let filePath = dataStore.saveFile(data: data, customerId: customerId, documentType: documentType, fileName: fileName)
-        
-        return DocumentItem(
-            documentType: documentType,
-            fileName: fileName,
-            filePath: filePath,
-            fileData: data
-        )
-    }
-    
     func saveFile(_ data: Data, for customerId: UUID, documentType: String, fileName: String) -> DocumentItem? {
         let filePath = dataStore.saveFile(data: data, customerId: customerId, documentType: documentType, fileName: fileName)
-        
-        return DocumentItem(
-            documentType: documentType,
-            fileName: fileName,
-            filePath: filePath,
-            fileData: data
-        )
+        return DocumentItem(documentType: documentType, fileName: fileName, filePath: filePath, fileData: data)
     }
     
     func addDocument(to customerId: UUID, document: DocumentItem) {
@@ -70,48 +50,25 @@ class DocumentViewModel: ObservableObject {
             let radians = CGFloat(90 * Double.pi / 180)
             if let rotated = image.rotated(by: radians) {
                 updatedDoc.fileData = rotated.jpegData(compressionQuality: 0.8)
-                let thumbnail = resizeImage(rotated, targetSize: CGSize(width: 200, height: 200))
-                updatedDoc.thumbnailData = thumbnail?.jpegData(compressionQuality: 0.5)
+                updatedDoc.thumbnailData = createThumbnail(from: updatedDoc.fileData!)
             }
         }
         
         dataStore.updateDocument(customerId: customerId, document: updatedDoc)
     }
     
-    private func resizeImage(_ image: UIImage, targetSize: CGSize) -> UIImage? {
-        let size = image.size
-        let widthRatio = targetSize.width / size.width
-        let heightRatio = targetSize.height / size.height
-        let ratio = min(widthRatio, heightRatio)
-        let newSize = CGSize(width: size.width * ratio, height: size.height * ratio)
+    func createThumbnail(from imageData: Data) -> Data? {
+        guard let image = UIImage(data: imageData) else { return nil }
+        let size = CGSize(width: 200, height: 200)
+        let ratio = min(size.width / image.size.width, size.height / image.size.height)
+        let newSize = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
         
         UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
         image.draw(in: CGRect(origin: .zero, size: newSize))
-        let newImage = UIGraphicsGetImageFromCurrentImageContext()
+        let thumbnail = UIGraphicsGetImageFromCurrentImageContext()
         UIGraphicsEndImageContext()
         
-        return newImage
+        return thumbnail?.jpegData(compressionQuality: 0.5)
     }
 }
 
-extension UIImage {
-    func rotated(by radians: CGFloat) -> UIImage? {
-        var newSize = CGRect(origin: .zero, size: self.size)
-            .applying(CGAffineTransform(rotationAngle: radians))
-            .size
-        newSize.width = abs(newSize.width)
-        newSize.height = abs(newSize.height)
-        
-        UIGraphicsBeginImageContextWithOptions(newSize, false, self.scale)
-        let context = UIGraphicsGetCurrentContext()!
-        
-        context.translateBy(x: newSize.width / 2, y: newSize.height / 2)
-        context.rotate(by: radians)
-        self.draw(in: CGRect(x: -self.size.width / 2, y: -self.size.height / 2, width: self.size.width, height: self.size.height))
-        
-        let newImage = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        
-        return newImage
-    }
-}
