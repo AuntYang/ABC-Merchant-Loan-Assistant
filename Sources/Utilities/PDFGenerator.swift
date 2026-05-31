@@ -630,7 +630,7 @@ struct PDFGenerator {
             var cells: [XlsxCell] = []
             let cellComps = rc.components(separatedBy: "<c ")
             for cc in cellComps.dropFirst() {
-                let cellEnd = cc.range(of: "</c>") ?? cc.range(of: "/>") ?? cc.endIndex...
+                let cellEnd: Range<String.Index> = cc.range(of: "</c>") ?? cc.range(of: "/>") ?? (cc.index(before: cc.endIndex)..<cc.endIndex)
                 guard let cellEndIdx = cc.range(of: ">") else { continue }
                 let cellAttrs = String(cc[cc.startIndex..<cellEndIdx.lowerBound])
                 let cellBody = String(cc[cellEndIdx.upperBound..<cellEnd.upperBound])
