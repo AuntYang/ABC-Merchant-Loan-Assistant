@@ -156,41 +156,19 @@ struct PDFGenerator {
     }
 
     private static func inflateRawDeflate(_ data: Data) -> String? {
-        let dstBufSize = max(data.count * 10, 65536)
-        var dstBuf = [UInt8](repeating: 0, count: dstBufSize)
-        let srcBuf = [UInt8](data)
-        let decompressed = data.withUnsafeBytes { (_ srcRaw: UnsafeRawBufferPointer) -> Int in
-            guard let srcPtr = srcRaw.baseAddress else { return -1 }
-            return dstBuf.withUnsafeMutableBytes { (_ dstRaw: UnsafeMutableRawBufferPointer) -> Int in
-                guard let dstPtr = dstRaw.baseAddress else { return -1 }
-                var stream = compression_stream(dst_ptr: nil, dst_size: 0, src_ptr: nil, src_size: 0, state: nil)
-                var status = compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB)
-                guard status == COMPRESSION_STATUS_OK else { return -1 }
-                defer { compression_stream_destroy(&stream) }
-                stream.src_ptr = srcPtr
-                stream.src_size = srcBuf.count
-                stream.dst_ptr = dstPtr
-                stream.dst_size = dstBufSize
-                status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
-                if status == COMPRESSION_STATUS_OK || status == COMPRESSION_STATUS_END {
-                    return dstBufSize - stream.dst_size
-                }
-                return -1
-            }
-        }
-        if decompressed > 0, let str = String(bytes: dstBuf[0..<decompressed], encoding: .utf8) {
+        // Approach 1: NSData zlib decompression
+        if let result = try? (data as NSData).decompressed(using: .zlib) as Data,
+           let str = String(data: result, encoding: .utf8), !str.isEmpty {
             return str
         }
+        // Approach 2: Prepend zlib header and try again
         var wrapped = Data([0x78, 0x9C])
         wrapped.append(data)
         if let result = try? (wrapped as NSData).decompressed(using: .zlib) as Data,
            let str = String(data: result, encoding: .utf8), !str.isEmpty {
             return str
         }
-        if let result = try? (data as NSData).decompressed(using: .zlib) as Data,
-           let str = String(data: result, encoding: .utf8), !str.isEmpty {
-            return str
-        }
+        // Approach 3: Try raw data as-is (stored, not deflated)
         if let str = String(data: data, encoding: .utf8), str.contains("<") {
             return str
         }
