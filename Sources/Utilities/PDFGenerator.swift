@@ -598,130 +598,37 @@ struct PDFGenerator {
     }
 
 
-    // MARK: - XLSX Placeholder Replacement (Rebuild ZIP from scratch)
+    // MARK: - XLSX Placeholder Replacement + HTML Conversion (No ZIP Rebuild)
     
-    private static func replaceXlsxPlaceholders(_ data: Data, customer: Customer) -> Data? {
-        let values = customer.autoTemplateValues()
-        guard !values.isEmpty else { return data }
-        let bytes = [UInt8](data)
-        guard bytes.count > 30, bytes[0] == 0x50, bytes[1] == 0x4B else { return nil }
-        guard let eocd = findEOCD(in: bytes) else { return nil }
-        let cdOffset = Int(UInt32(bytes[eocd+16]) | UInt32(bytes[eocd+17]) << 8 | UInt32(bytes[eocd+18]) << 16 | UInt32(bytes[eocd+19]) << 24)
-        let numEntries = Int(UInt16(bytes[eocd+10]) | UInt16(bytes[eocd+11]) << 8)
-        
-        struct RawEntry {
-            let name: String; let compMethod: UInt16; let compSize: Int; let uncompSize: Int
-            let localHeaderSize: Int; let localDataStart: Int
+    /// Extract sharedStrings.xml from xlsx, replace placeholders in memory, return modified XML.
+    private static func extractModifiedSharedStrings(_ data: Data, customer: Customer) -> (strings: [String], xml: String)? {
+        guard let ssXML = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") else { return nil }
+        var modified = ssXML
+        for (key, value) in customer.autoTemplateValues() {
+            modified = modified.replacingOccurrences(of: "{{" + key + "}}", with: value)
         }
-        var entries: [RawEntry] = []
-        var off = cdOffset
-        for _ in 0..<numEntries {
-            guard off + 46 <= bytes.count else { break }
-            let sig = UInt32(bytes[off]) | UInt32(bytes[off+1]) << 8 | UInt32(bytes[off+2]) << 16 | UInt32(bytes[off+3]) << 24
-            guard sig == 0x02014B50 else { break }
-            let cm = UInt16(bytes[off+10]) | UInt16(bytes[off+11]) << 8
-            let cs = Int(UInt32(bytes[off+20]) | UInt32(bytes[off+21]) << 8 | UInt32(bytes[off+22]) << 16 | UInt32(bytes[off+23]) << 24)
-            let us = Int(UInt32(bytes[off+24]) | UInt32(bytes[off+25]) << 8 | UInt32(bytes[off+26]) << 16 | UInt32(bytes[off+27]) << 24)
-            let nl = Int(UInt16(bytes[off+28]) | UInt16(bytes[off+29]) << 8)
-            let el = Int(UInt16(bytes[off+30]) | UInt16(bytes[off+31]) << 8)
-            let cl = Int(UInt16(bytes[off+32]) | UInt16(bytes[off+33]) << 8)
-            let localOff = Int(UInt32(bytes[off+42]) | UInt32(bytes[off+43]) << 8 | UInt32(bytes[off+44]) << 16 | UInt32(bytes[off+45]) << 24)
-            guard localOff + 30 <= bytes.count else { break }
-            let lnl = Int(UInt16(bytes[localOff+26]) | UInt16(bytes[localOff+27]) << 8)
-            let lel = Int(UInt16(bytes[localOff+28]) | UInt16(bytes[localOff+29]) << 8)
-            let nameStart = off + 46
-            guard nameStart + nl <= bytes.count else { break }
-            let name = String(bytes: bytes[nameStart..<(nameStart + nl)], encoding: .utf8) ?? ""
-            entries.append(RawEntry(name: name, compMethod: cm, compSize: cs, uncompSize: us,
-                                    localHeaderSize: 30 + lnl + lel, localDataStart: localOff + 30 + lnl + lel))
-            off += 46 + nl + el + cl
-        }
-        
-        var newZip = Data()
-        var newCD = Data()
-        var currentOffset = 0
-        
-        for entry in entries {
-            var entryData = Data()
-            var newCompSize = entry.compSize
-            var newUncompSize = entry.uncompSize
-            var newCompMethod = entry.compMethod
-            
-            if entry.name == "xl/sharedStrings.xml" && entry.compMethod == 8 {
-                let src = entry.localDataStart
-                guard src + entry.compSize <= bytes.count else { return nil }
-                let compData = Data(bytes[src..<(src + entry.compSize)])
-                if var xmlStr = inflateRawDeflate(compData) {
-                    for (key, value) in values {
-                        xmlStr = xmlStr.replacingOccurrences(of: "{{" + key + "}}", with: value)
-                    }
-                    if let newData = xmlStr.data(using: .utf8) {
-                        newCompSize = newData.count
-                        newUncompSize = newData.count
-                        newCompMethod = 0
-                        var lh = [UInt8](repeating: 0, count: 30)
-                        lh[0] = 0x50; lh[1] = 0x4B; lh[2] = 0x03; lh[3] = 0x04
-                        lh[4] = 20; lh[5] = 0
-                        let nameBytes = [UInt8](entry.name.utf8)
-                        lh[26] = UInt8(nameBytes.count & 0xFF); lh[27] = UInt8(nameBytes.count >> 8)
-                        lh[18] = UInt8(newCompSize & 0xFF); lh[19] = UInt8((newCompSize >> 8) & 0xFF)
-                        lh[20] = UInt8((newCompSize >> 16) & 0xFF); lh[21] = UInt8((newCompSize >> 24) & 0xFF)
-                        lh[22] = UInt8(newUncompSize & 0xFF); lh[23] = UInt8((newUncompSize >> 8) & 0xFF)
-                        lh[24] = UInt8((newUncompSize >> 16) & 0xFF); lh[25] = UInt8((newUncompSize >> 24) & 0xFF)
-                        entryData.append(contentsOf: lh)
-                        entryData.append(contentsOf: nameBytes)
-                        entryData.append(newData)
-                    } else { return nil }
-                } else { return nil }
-            } else {
-                let src = entry.localDataStart - entry.localHeaderSize
-                let totalSize = entry.localHeaderSize + entry.compSize
-                guard src >= 0 && src + totalSize <= bytes.count else { continue }
-                entryData = Data(bytes[src..<(src + totalSize)])
-            }
-            
-            newZip.append(entryData)
-            
-            var cd = Data()
-            cd.append(contentsOf: [0x50, 0x4B, 0x01, 0x02])
-            cd.append(contentsOf: [0x14, 0x00, 0x14, 0x00, 0x00, 0x00])
-            cd.append(contentsOf: [UInt8(newCompMethod & 0xFF), UInt8(newCompMethod >> 8)])
-            cd.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-            cd.append(contentsOf: [UInt8(newCompSize & 0xFF), UInt8((newCompSize >> 8) & 0xFF), UInt8((newCompSize >> 16) & 0xFF), UInt8((newCompSize >> 24) & 0xFF)])
-            cd.append(contentsOf: [UInt8(newUncompSize & 0xFF), UInt8((newUncompSize >> 8) & 0xFF), UInt8((newUncompSize >> 16) & 0xFF), UInt8((newUncompSize >> 24) & 0xFF)])
-            let nameBytes = [UInt8](entry.name.utf8)
-            cd.append(contentsOf: [UInt8(nameBytes.count & 0xFF), UInt8(nameBytes.count >> 8)])
-            cd.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-            cd.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
-            cd.append(contentsOf: [UInt8(currentOffset & 0xFF), UInt8((currentOffset >> 8) & 0xFF), UInt8((currentOffset >> 16) & 0xFF), UInt8((currentOffset >> 24) & 0xFF)])
-            cd.append(contentsOf: nameBytes)
-            newCD.append(cd)
-            currentOffset += entryData.count
-        }
-        
-        let cdStart = currentOffset
-        newZip.append(newCD)
-        var eocdBytes = Data()
-        eocdBytes.append(contentsOf: [0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00])
-        let ne = UInt16(entries.count)
-        eocdBytes.append(contentsOf: [UInt8(ne & 0xFF), UInt8(ne >> 8), UInt8(ne & 0xFF), UInt8(ne >> 8)])
-        let cdSize = newCD.count
-        eocdBytes.append(contentsOf: [UInt8(cdSize & 0xFF), UInt8((cdSize >> 8) & 0xFF), UInt8((cdSize >> 16) & 0xFF), UInt8((cdSize >> 24) & 0xFF)])
-        eocdBytes.append(contentsOf: [UInt8(cdStart & 0xFF), UInt8((cdStart >> 8) & 0xFF), UInt8((cdStart >> 16) & 0xFF), UInt8((cdStart >> 24) & 0xFF)])
-        eocdBytes.append(contentsOf: [0x00, 0x00])
-        newZip.append(eocdBytes)
-        return newZip
+        let strings = parseXlsxSharedStrings(modified)
+        return (strings, modified)
     }
-
-    // MARK: - XLSX to HTML Conversion
     
-    private static func convertXlsxToHtml(_ data: Data) -> String? {
+    // MARK: - XLSX to HTML Conversion (reads from original ZIP, uses modified shared strings)
+    
+    private static func convertXlsxToHtml(_ data: Data, customer: Customer? = nil) -> String? {
         let bytes = [UInt8](data)
         guard bytes.count > 4, bytes[0] == 0x50, bytes[1] == 0x4B else { return nil }
-        guard let ssXML = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") else { return nil }
-        let sharedStrings = parseXlsxSharedStrings(ssXML)
+        
+        // Get shared strings (with placeholder replacement if customer provided)
+        var sharedStrings: [String]
+        if let customer = customer, let result = extractModifiedSharedStrings(data, customer: customer) {
+            sharedStrings = result.strings
+        } else {
+            guard let ssXML = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") else { return nil }
+            sharedStrings = parseXlsxSharedStrings(ssXML)
+        }
+        
         guard let sheetXML = extractXMLFromZip(data, entryName: "xl/worksheets/sheet1.xml") else { return nil }
         
+        // Parse styles
         var fontSizes: [Int: CGFloat] = [:]
         var fontBold: [Int: Bool] = [:]
         var borderDefs: [Int: (Bool, Bool, Bool, Bool)] = [:]
@@ -752,6 +659,7 @@ struct PDFGenerator {
             }
         }
         
+        // Parse column widths
         var colWidths: [CGFloat] = []
         if let cm = sheetXML.range(of: "<cols>"), let ce = sheetXML.range(of: "</cols>", range: cm.upperBound..<sheetXML.endIndex) {
             var widths: [Int: CGFloat] = [:]
@@ -763,10 +671,11 @@ struct PDFGenerator {
                       let w = Double(cd[wR.upperBound..<wE.lowerBound]) else { continue }
                 for c in mn...mx { widths[c] = CGFloat(w * 7 + 5) }
             }
-            if !widths.isEmpty { let mc = widths.keys.max() ?? 4; colWidths = (1...mc).map { widths[$0] ?? 60 } }
+            if !widths.isEmpty { let mc = widths.keys.max() ?? 4; colWidths = (1...mc).map { widths[] ?? 60 } }
         }
         if colWidths.isEmpty { colWidths = [60, 60, 60, 60] }
         
+        // Parse merge cells
         var mergeSet = Set<String>()
         var mergeInfo: [String: (Int, Int)] = [:]
         if let mm = sheetXML.range(of: "<mergeCells"), let me = sheetXML.range(of: "</mergeCells>", range: mm.upperBound..<sheetXML.endIndex) {
@@ -824,7 +733,7 @@ struct PDFGenerator {
         
         var cellMap: [String: HtmlCell] = [:]
         for c in cells { cellMap["\(c.col),\(c.row)"] = c }
-        let maxRow = cells.map { $0.row }.max() ?? 1
+        let maxRow = cells.map { .row }.max() ?? 1
         let maxCol = colWidths.count
         
         for r in 1...maxRow {
@@ -913,15 +822,13 @@ struct PDFGenerator {
                 }
                 guard let data = dataToAppend else { debugLines.append("[NIL] \(docItem.fileName)"); continue }
                 
-                let isTemplate = DocumentTypeRegistry.templateTypes.contains(where: { $0.id == docItem.documentType })
+                let isTemplate = DocumentTypeRegistry.templateTypes.contains(where: { .id == docItem.documentType })
                 debugLines.append("\(isTemplate ? "[TPL]" : "[DOC]") \(docItem.fileName) size=\(data.count)")
                 
                 if isTemplate {
                     let isXlsx = data.count > 4 && data[0] == 0x50 && data[1] == 0x4B
                     if isXlsx {
-                        let modifiedData = replaceXlsxPlaceholders(data, customer: customer) ?? data
-                        debugLines.append("  -> ZIP: \(modifiedData.count) bytes")
-                        if let html = convertXlsxToHtml(modifiedData) {
+                        if let html = convertXlsxToHtml(data, customer: customer) {
                             debugLines.append("  -> HTML: \(html.count) chars")
                             if let pdfData = renderHtmlToPdf(html), let pdfDoc = PDFDocument(data: pdfData) {
                                 for i in 0..<pdfDoc.pageCount { if let page = pdfDoc.page(at: i) { context.beginPage(); drawPDFPage(page, in: context) } }
@@ -929,15 +836,15 @@ struct PDFGenerator {
                             } else {
                                 debugLines.append("  -> HTML->PDF FAILED")
                                 if let ss = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") {
-                                    let text = parseXlsxSharedStrings(ss).joined(separator: "\n")
-                                    if !text.isEmpty { renderTextAsPDFPages(fillPlaceholders(in: text, customer: customer), title: nil, in: context) }
+                                    let text = fillPlaceholders(in: parseXlsxSharedStrings(ss).joined(separator: "\n"), customer: customer)
+                                    if !text.isEmpty { renderTextAsPDFPages(text, title: nil, in: context) }
                                 }
                             }
                         } else {
                             debugLines.append("  -> HTML FAILED")
                             if let ss = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") {
-                                let text = parseXlsxSharedStrings(ss).joined(separator: "\n")
-                                if !text.isEmpty { renderTextAsPDFPages(fillPlaceholders(in: text, customer: customer), title: nil, in: context) }
+                                let text = fillPlaceholders(in: parseXlsxSharedStrings(ss).joined(separator: "\n"), customer: customer)
+                                if !text.isEmpty { renderTextAsPDFPages(text, title: nil, in: context) }
                             }
                         }
                     } else {
