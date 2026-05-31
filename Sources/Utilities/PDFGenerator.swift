@@ -1,7 +1,8 @@
-import UIKit
+﻿import UIKit
 import PDFKit
 import Compression
 import zlib
+import WebKit
 
 struct PDFGenerator {
 
@@ -380,169 +381,6 @@ struct PDFGenerator {
     }
 
 
-    // MARK: - XLSX Formatted Table Renderer
-
-    /// Render an xlsx file as a properly formatted table in the PDF context.
-    /// Handles column widths, merge cells, borders, and cell styles.
-    static func renderXlsxAsFormattedTable(_ data: Data, customer: Customer, in context: UIGraphicsPDFRendererContext) {
-        guard let result = parseXlsxStructured(data, customer: customer) else { return }
-        let pageW: CGFloat = 595.2
-        let pageH: CGFloat = 841.8
-        let marginX: CGFloat = 30
-        let marginTop: CGFloat = 40
-        let marginBottom: CGFloat = 40
-        let contentW = pageW - marginX * 2
-        
-        // Scale columns to fit page width
-        let totalWidth = result.colWidths.reduce(0, +)
-        let scale = totalWidth > 0 ? contentW / totalWidth : 1.0
-        
-        // Build column x-positions
-        var colXs: [CGFloat] = [0]
-        for w in result.colWidths {
-            colXs.append(colXs.last! + w * scale)
-        }
-        
-        // Build merge lookup: cell -> merge rect
-        var mergeMap: [String: (col: Int, row: Int, colSpan: Int, rowSpan: Int)] = [:]
-        for m in result.merges {
-            let parts = m.components(separatedBy: ":")
-            guard parts.count == 2 else { continue }
-            let (c1, r1) = parseCellRef(parts[0])
-            let (c2, r2) = parseCellRef(parts[1])
-            let colSpan = c2 - c1 + 1
-            let rowSpan = r2 - r1 + 1
-            // Mark all cells in merge range (except top-left as hidden)
-            for mc in c1...c2 {
-                for mr in r1...r2 {
-                    let key = "\\(mc),\\(mr)"
-                    if mc == c1 && mr == r1 {
-                        mergeMap[key] = (c1, r1, colSpan, rowSpan)
-                    } else {
-                        mergeMap[key] = (c1, r1, -colSpan, -rowSpan) // negative = hidden
-                    }
-                }
-            }
-        }
-        
-        // Assign row heights
-        var rowHeights: [Int: CGFloat] = [:]
-        for row in result.rows {
-            rowHeights[row.row] = row.height > 0 ? row.height : 20
-        }
-        
-        // Calculate total table height and find page break points
-        var rowYPositions: [Int: CGFloat] = [:]
-        var y: CGFloat = 0
-        let maxRow = result.rows.map { $0.row }.max() ?? 0
-        for r in 1...maxRow {
-            rowYPositions[r] = y
-            y += rowHeights[r] ?? 20
-        }
-        let totalHeight = y
-        
-        // Render table in pages
-        var currentRow = 1
-        while currentRow <= maxRow {
-            context.beginPage()
-            let pageStartY = rowYPositions[currentRow] ?? 0
-            let availableH = pageH - marginTop - marginBottom
-            
-            // Find how many rows fit on this page
-            var endRow = currentRow
-            for r in currentRow...maxRow {
-                let ry = (rowYPositions[r] ?? 0) - pageStartY
-                let rh = rowHeights[r] ?? 20
-                if ry + rh <= availableH {
-                    endRow = r
-                } else { break }
-            }
-            
-            // Draw rows for this page
-            for row in result.rows where row.row >= currentRow && row.row <= endRow {
-                let ry = marginTop + ((rowYPositions[row.row] ?? 0) - pageStartY)
-                let rh = rowHeights[row.row] ?? 20
-                
-                // Draw each cell
-                for cell in row.cells {
-                    let key = "\\(cell.col),\\(cell.row)"
-                    guard let merge = mergeMap[key] else {
-                        // Regular cell
-                        let cx = marginX + colXs[cell.col]
-                        let cw = (cell.col < result.colWidths.count ? result.colWidths[cell.col] : 50) * scale
-                        drawTableCell(cell.text, rect: CGRect(x: cx, y: ry, width: cw, height: rh), borderId: cell.borderId, in: context)
-                        continue
-                    }
-                    
-                    if merge.colSpan > 0 {
-                        // Top-left of merge: draw with merged rect
-                        let cx = marginX + colXs[merge.col]
-                        let cw = colXs[merge.col + merge.colSpan] - colXs[merge.col]
-                        drawTableCell(cell.text, rect: CGRect(x: cx, y: ry, width: cw, height: rh), borderId: cell.borderId, in: context)
-                    }
-                    // Skip non-top-left merged cells
-                }
-            }
-            
-            currentRow = endRow + 1
-        }
-    }
-
-    private static func drawTableCell(_ text: String, rect: CGRect, borderId: Int, in context: UIGraphicsPDFRendererContext) {
-        let ctx = context.cgContext
-        let padding: CGFloat = 3
-        
-        // Draw borders based on borderId
-        let borders = getBorderSides(for: borderId)
-        ctx.setStrokeColor(UIColor.black.cgColor)
-        ctx.setLineWidth(0.5)
-        if borders.top {
-            ctx.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            ctx.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            ctx.strokePath()
-        }
-        if borders.bottom {
-            ctx.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-            ctx.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            ctx.strokePath()
-        }
-        if borders.left {
-            ctx.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            ctx.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-            ctx.strokePath()
-        }
-        if borders.right {
-            ctx.move(to: CGPoint(x: rect.maxX, y: rect.minY))
-            ctx.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            ctx.strokePath()
-        }
-        
-        // Draw text
-        if !text.isEmpty {
-            let font = UIFont.systemFont(ofSize: 9)
-            let para = NSMutableParagraphStyle()
-            para.lineBreakMode = .byWordWrapping
-            para.alignment = .left
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: para]
-            let textRect = rect.insetBy(dx: padding, dy: padding)
-            (text as NSString).draw(in: textRect, withAttributes: attrs)
-        }
-    }
-
-    private struct BorderSides { var top: Bool; var bottom: Bool; var left: Bool; var right: Bool }
-    private static var borderCache: [Int: BorderSides] = [:]
-    private static func getBorderSides(for borderId: Int) -> BorderSides {
-        if let cached = borderCache[borderId] { return cached }
-        // Default: all thin borders for non-zero borderId
-        let result: BorderSides
-        if borderId == 0 {
-            result = BorderSides(top: false, bottom: false, left: false, right: false)
-        } else {
-            result = BorderSides(top: true, bottom: true, left: true, right: true)
-        }
-        borderCache[borderId] = result
-        return result
-    }
 
     private static func parseCellRef(_ ref: String) -> (col: Int, row: Int) {
         let colStr = ref.prefix(while: { $0.isLetter })
@@ -551,152 +389,6 @@ struct PDFGenerator {
     }
 
     /// Parsed xlsx cell
-    private struct XlsxCell { let col: Int; let row: Int; var text: String; var borderId: Int }
-    private struct XlsxRow { let row: Int; let height: CGFloat; let cells: [XlsxCell] }
-    private struct XlsxParseResult { let colWidths: [CGFloat]; let rows: [XlsxRow]; let merges: [String] }
-
-    /// Parse xlsx into structured data with formatting info.
-    private static func parseXlsxStructured(_ data: Data, customer: Customer? = nil) -> XlsxParseResult? {
-        let bytes = [UInt8](data)
-        guard bytes.count > 4, bytes[0] == 0x50, bytes[1] == 0x4B else { return nil }
-        
-        guard let ssXML = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") else { return nil }
-        let sharedStrings = parseXlsxSharedStrings(ssXML)
-        var finalStrings = sharedStrings
-        if let customer = customer {
-            let values = customer.autoTemplateValues()
-            for i in 0..<finalStrings.count {
-                for (key, value) in values {
-                    finalStrings[i] = finalStrings[i].replacingOccurrences(of: "{{" + key + "}}", with: value)
-                }
-            }
-        }
-        
-        // Try sheet1 first
-        guard var sheetXML = extractXMLFromZip(data, entryName: "xl/worksheets/sheet1.xml") else { return nil }
-        
-        // Parse column widths
-        var colWidths: [CGFloat] = [60, 60, 60, 60] // default
-        if let colsMatch = sheetXML.range(of: "<cols>", range: sheetXML.startIndex..<sheetXML.endIndex),
-           let colsEnd = sheetXML.range(of: "</cols>", range: colsMatch.upperBound..<sheetXML.endIndex) {
-            let colsStr = String(sheetXML[colsMatch.upperBound..<colsEnd.lowerBound])
-            let colDefs = colsStr.components(separatedBy: "<col ")
-            var widths: [Int: CGFloat] = [:]
-            for cd in colDefs.dropFirst() {
-                guard let minR = cd.range(of: "min=\""), let minE = cd.range(of: "\"", range: minR.upperBound..<cd.endIndex) else { continue }
-                guard let maxR = cd.range(of: "max=\""), let maxE = cd.range(of: "\"", range: maxR.upperBound..<cd.endIndex) else { continue }
-                guard let wR = cd.range(of: "width=\""), let wE = cd.range(of: "\"", range: wR.upperBound..<cd.endIndex) else { continue }
-                guard let minC = Int(cd[minR.upperBound..<minE.lowerBound]),
-                      let maxC = Int(cd[maxR.upperBound..<maxE.lowerBound]),
-                      let w = Double(cd[wR.upperBound..<wE.lowerBound]) else { continue }
-                let pts = CGFloat(w) * 7 + 5
-                for c in minC...maxC { widths[c] = pts }
-            }
-            if !widths.isEmpty {
-                let maxCol = widths.keys.max() ?? 4
-                colWidths = (1...maxCol).map { widths[$0] ?? 60 }
-            }
-        }
-        
-        // Parse merge cells
-        var merges: [String] = []
-        if let mcMatch = sheetXML.range(of: "<mergeCells", range: sheetXML.startIndex..<sheetXML.endIndex),
-           let mcEnd = sheetXML.range(of: "</mergeCells>", range: mcMatch.upperBound..<sheetXML.endIndex) {
-            let mcStr = String(sheetXML[mcMatch.upperBound..<mcEnd.lowerBound])
-            let refs = mcStr.components(separatedBy: "mergeCell ref=\"")
-            for r in refs.dropFirst() {
-                guard let endQ = r.range(of: "\"") else { continue }
-                merges.append(String(r[r.startIndex..<endQ.lowerBound]))
-            }
-        }
-        
-        // Parse rows and cells
-        var rows: [XlsxRow] = []
-        let rowComponents = sheetXML.components(separatedBy: "<row ")
-        for rc in rowComponents.dropFirst() {
-            guard let rowEndTag = rc.range(of: ">") else { continue }
-            let rowAttrs = String(rc[rc.startIndex..<rowEndTag.lowerBound])
-            guard let rMatch = rowAttrs.range(of: "r=\""),
-                  let rEnd = rowAttrs.range(of: "\"", range: rMatch.upperBound..<rowAttrs.endIndex),
-                  let rowNum = Int(rowAttrs[rMatch.upperBound..<rEnd.lowerBound]) else { continue }
-            
-            var rowHeight: CGFloat = 20
-            if let htMatch = rowAttrs.range(of: "ht=\""),
-               let htEnd = rowAttrs.range(of: "\"", range: htMatch.upperBound..<rowAttrs.endIndex),
-               let ht = Double(rowAttrs[htMatch.upperBound..<htEnd.lowerBound]) {
-                rowHeight = CGFloat(ht)
-            }
-            
-            var cells: [XlsxCell] = []
-            let cellComps = rc.components(separatedBy: "<c ")
-            for cc in cellComps.dropFirst() {
-                let cellEnd: Range<String.Index> = cc.range(of: "</c>") ?? cc.range(of: "/>") ?? (cc.index(before: cc.endIndex)..<cc.endIndex)
-                guard let cellEndIdx = cc.range(of: ">") else { continue }
-                let cellAttrs = String(cc[cc.startIndex..<cellEndIdx.lowerBound])
-                let cellBody = String(cc[cellEndIdx.upperBound..<cellEnd.upperBound])
-                
-                guard let crMatch = cellAttrs.range(of: "r=\""),
-                      let crEnd = cellAttrs.range(of: "\"", range: crMatch.upperBound..<cellAttrs.endIndex) else { continue }
-                let cellRef = String(cellAttrs[crMatch.upperBound..<crEnd.lowerBound])
-                let (col, _) = parseCellRef(cellRef)
-                
-                var styleId = 0
-                if let sMatch = cellAttrs.range(of: "s=\""),
-                   let sEnd = cellAttrs.range(of: "\"", range: sMatch.upperBound..<cellAttrs.endIndex) {
-                    styleId = Int(cellAttrs[sMatch.upperBound..<sEnd.lowerBound]) ?? 0
-                }
-                
-                let isShared = cellBody.contains("t=\"s\"") || cellAttrs.contains("t=\"s\"")
-                var text = ""
-                if let vStart = cellBody.range(of: "<v>"), let vEnd = cellBody.range(of: "</v>") {
-                    let val = String(cellBody[vStart.upperBound..<vEnd.lowerBound])
-                    if isShared, let idx = Int(val), idx < sharedStrings.count {
-                        text = sharedStrings[idx]
-                    } else {
-                        text = val
-                    }
-                } else if let isStart = cellBody.range(of: "<is>"), let isEnd = cellBody.range(of: "</is>") {
-                    let isContent = String(cellBody[isStart.upperBound..<isEnd.lowerBound])
-                    if let tStart = isContent.range(of: "<t"), let tEnd = isContent.range(of: "</t>") {
-                        let afterT = isContent[tStart.upperBound...]
-                        if let cb = afterT.range(of: ">") {
-                            text = String(afterT[cb.upperBound..<tEnd.lowerBound])
-                        }
-                    }
-                }
-                
-                // Get border ID from style
-                var borderId = 0
-                // Style parsing would need full XML parsing of styles.xml
-                // For now, use a simple heuristic: most cells have borders
-                if styleId > 0 { borderId = 4 } // default thin-all
-                
-                cells.append(XlsxCell(col: col, row: rowNum, text: text, borderId: borderId))
-            }
-            rows.append(XlsxRow(row: rowNum, height: rowHeight, cells: cells))
-        }
-        
-        return XlsxParseResult(colWidths: colWidths, rows: rows, merges: merges)
-    }
-
-    private static func extractTextFromRawXML(_ data: Data) -> String? {
-        let bodyStart = "<w:body".data(using: .utf8)!
-        let bodyEnd = "</w:body>".data(using: .utf8)!
-        if let sr = data.range(of: bodyStart), let er = data.range(of: bodyEnd, in: sr.lowerBound..<data.count) {
-            if let xml = String(data: data.subdata(in: sr.lowerBound..<er.upperBound), encoding: .utf8) {
-                return extractTextFromXMLContent(xml)
-            }
-        }
-        let sstStart = "<sst".data(using: .utf8)!
-        let sstEnd = "</sst>".data(using: .utf8)!
-        if let sr = data.range(of: sstStart), let er = data.range(of: sstEnd, in: sr.lowerBound..<data.count) {
-            if let xml = String(data: data.subdata(in: sr.lowerBound..<er.upperBound), encoding: .utf8) {
-                let strings = parseXlsxSharedStrings(xml)
-                if !strings.isEmpty { return strings.joined(separator: "\n") }
-            }
-        }
-        return nil
-    }
 
     private static func extractTextFromXMLContent(_ xml: String) -> String? {
         var text = xml
@@ -886,53 +578,322 @@ struct PDFGenerator {
         }
     }
 
-    // MARK: - Main PDF Generation
 
+    // MARK: - Cell Reference Parser
+    
+    private static func parseCellRef(_ ref: String) -> (col: Int, row: Int) {
+        let colStr = ref.prefix(while: { $0.isLetter })
+        let rowStr = ref.drop(while: { $0.isLetter })
+        return (colIndex(colStr) ?? 0, Int(rowStr) ?? 0)
+    }
+    
+    // MARK: - XLSX Placeholder Replacement (Rebuild ZIP from scratch)
+    
+    private static func replaceXlsxPlaceholders(_ data: Data, customer: Customer) -> Data? {
+        let values = customer.autoTemplateValues()
+        guard !values.isEmpty else { return data }
+        let bytes = [UInt8](data)
+        guard bytes.count > 30, bytes[0] == 0x50, bytes[1] == 0x4B else { return nil }
+        guard let eocd = findEOCD(in: bytes) else { return nil }
+        let cdOffset = Int(UInt32(bytes[eocd+16]) | UInt32(bytes[eocd+17]) << 8 | UInt32(bytes[eocd+18]) << 16 | UInt32(bytes[eocd+19]) << 24)
+        let numEntries = Int(UInt16(bytes[eocd+10]) | UInt16(bytes[eocd+11]) << 8)
+        
+        struct RawEntry {
+            let name: String; let compMethod: UInt16; let compSize: Int; let uncompSize: Int
+            let localHeaderSize: Int; let localDataStart: Int; let cdNameLen: Int; let cdExtraLen: Int; let cdCommentLen: Int
+        }
+        var entries: [RawEntry] = []
+        var off = cdOffset
+        for _ in 0..<numEntries {
+            guard off + 46 <= bytes.count else { break }
+            let sig = UInt32(bytes[off]) | UInt32(bytes[off+1]) << 8 | UInt32(bytes[off+2]) << 16 | UInt32(bytes[off+3]) << 24
+            guard sig == 0x02014B50 else { break }
+            let cm = UInt16(bytes[off+10]) | UInt16(bytes[off+11]) << 8
+            let cs = Int(UInt32(bytes[off+20]) | UInt32(bytes[off+21]) << 8 | UInt32(bytes[off+22]) << 16 | UInt32(bytes[off+23]) << 24)
+            let us = Int(UInt32(bytes[off+24]) | UInt32(bytes[off+25]) << 8 | UInt32(bytes[off+26]) << 16 | UInt32(bytes[off+27]) << 24)
+            let nl = Int(UInt16(bytes[off+28]) | UInt16(bytes[off+29]) << 8)
+            let el = Int(UInt16(bytes[off+30]) | UInt16(bytes[off+31]) << 8)
+            let cl = Int(UInt16(bytes[off+32]) | UInt16(bytes[off+33]) << 8)
+            let localOff = Int(UInt32(bytes[off+42]) | UInt32(bytes[off+43]) << 8 | UInt32(bytes[off+44]) << 16 | UInt32(bytes[off+45]) << 24)
+            guard localOff + 30 <= bytes.count else { break }
+            let lnl = Int(UInt16(bytes[localOff+26]) | UInt16(bytes[localOff+27]) << 8)
+            let lel = Int(UInt16(bytes[localOff+28]) | UInt16(bytes[localOff+29]) << 8)
+            let nameStart = off + 46
+            guard nameStart + nl <= bytes.count else { break }
+            let name = String(bytes: bytes[nameStart..<(nameStart + nl)], encoding: .utf8) ?? ""
+            entries.append(RawEntry(name: name, compMethod: cm, compSize: cs, uncompSize: us,
+                                    localHeaderSize: 30 + lnl + lel, localDataStart: localOff + 30 + lnl + lel,
+                                    cdNameLen: nl, cdExtraLen: el, cdCommentLen: cl))
+            off += 46 + nl + el + cl
+        }
+        
+        var newZip = Data()
+        var newCD = Data()
+        var currentOffset = 0
+        
+        for entry in entries {
+            var entryData = Data()
+            var newCompSize = entry.compSize
+            var newUncompSize = entry.uncompSize
+            var newCompMethod = entry.compMethod
+            
+            if entry.name == "xl/sharedStrings.xml" && entry.compMethod == 8 {
+                let src = entry.localDataStart
+                guard src + entry.compSize <= bytes.count else { return nil }
+                let compData = Data(bytes[src..<(src + entry.compSize)])
+                if var xmlStr = inflateRawDeflate(compData) {
+                    for (key, value) in values {
+                        xmlStr = xmlStr.replacingOccurrences(of: "{{" + key + "}}", with: value)
+                    }
+                    if let newData = xmlStr.data(using: .utf8) {
+                        // Store uncompressed for maximum compatibility
+                        newCompSize = newData.count
+                        newUncompSize = newData.count
+                        newCompMethod = 0
+                        var lh = [UInt8](repeating: 0, count: 30)
+                        lh[0] = 0x50; lh[1] = 0x4B; lh[2] = 0x03; lh[3] = 0x04
+                        lh[4] = 20; lh[5] = 0
+                        let nameBytes = [UInt8](entry.name.utf8)
+                        lh[26] = UInt8(nameBytes.count & 0xFF); lh[27] = UInt8(nameBytes.count >> 8)
+                        lh[18] = UInt8(newCompSize & 0xFF); lh[19] = UInt8((newCompSize >> 8) & 0xFF)
+                        lh[20] = UInt8((newCompSize >> 16) & 0xFF); lh[21] = UInt8((newCompSize >> 24) & 0xFF)
+                        lh[22] = UInt8(newUncompSize & 0xFF); lh[23] = UInt8((newUncompSize >> 8) & 0xFF)
+                        lh[24] = UInt8((newUncompSize >> 16) & 0xFF); lh[25] = UInt8((newUncompSize >> 24) & 0xFF)
+                        entryData.append(contentsOf: lh)
+                        entryData.append(contentsOf: nameBytes)
+                        entryData.append(newData)
+                    } else { return nil }
+                } else { return nil }
+            } else {
+                let src = entry.localDataStart - entry.localHeaderSize
+                let totalSize = entry.localHeaderSize + entry.compSize
+                guard src >= 0 && src + totalSize <= bytes.count else { continue }
+                entryData = Data(bytes[src..<(src + totalSize)])
+            }
+            
+            newZip.append(entryData)
+            
+            var cd = Data()
+            cd.append(contentsOf: [0x50, 0x4B, 0x01, 0x02])
+            cd.append(contentsOf: [0x14, 0x00, 0x14, 0x00, 0x00, 0x00])
+            cd.append(contentsOf: [UInt8(newCompMethod & 0xFF), UInt8(newCompMethod >> 8)])
+            cd.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+            cd.append(contentsOf: [UInt8(newCompSize & 0xFF), UInt8((newCompSize >> 8) & 0xFF), UInt8((newCompSize >> 16) & 0xFF), UInt8((newCompSize >> 24) & 0xFF)])
+            cd.append(contentsOf: [UInt8(newUncompSize & 0xFF), UInt8((newUncompSize >> 8) & 0xFF), UInt8((newUncompSize >> 16) & 0xFF), UInt8((newUncompSize >> 24) & 0xFF)])
+            let nameBytes = [UInt8](entry.name.utf8)
+            cd.append(contentsOf: [UInt8(nameBytes.count & 0xFF), UInt8(nameBytes.count >> 8)])
+            cd.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+            cd.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+            cd.append(contentsOf: [UInt8(currentOffset & 0xFF), UInt8((currentOffset >> 8) & 0xFF), UInt8((currentOffset >> 16) & 0xFF), UInt8((currentOffset >> 24) & 0xFF)])
+            cd.append(contentsOf: nameBytes)
+            newCD.append(cd)
+            currentOffset += entryData.count
+        }
+        
+        let cdStart = currentOffset
+        newZip.append(newCD)
+        var eocdBytes = Data()
+        eocdBytes.append(contentsOf: [0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00])
+        let ne = UInt16(entries.count)
+        eocdBytes.append(contentsOf: [UInt8(ne & 0xFF), UInt8(ne >> 8), UInt8(ne & 0xFF), UInt8(ne >> 8)])
+        let cdSize = newCD.count
+        eocdBytes.append(contentsOf: [UInt8(cdSize & 0xFF), UInt8((cdSize >> 8) & 0xFF), UInt8((cdSize >> 16) & 0xFF), UInt8((cdSize >> 24) & 0xFF)])
+        eocdBytes.append(contentsOf: [UInt8(cdStart & 0xFF), UInt8((cdStart >> 8) & 0xFF), UInt8((cdStart >> 16) & 0xFF), UInt8((cdStart >> 24) & 0xFF)])
+        eocdBytes.append(contentsOf: [0x00, 0x00])
+        newZip.append(eocdBytes)
+        return newZip
+    }
+    
+    // MARK: - XLSX to HTML Conversion
+    
+    private static func convertXlsxToHtml(_ data: Data) -> String? {
+        let bytes = [UInt8](data)
+        guard bytes.count > 4, bytes[0] == 0x50, bytes[1] == 0x4B else { return nil }
+        guard let ssXML = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") else { return nil }
+        let sharedStrings = parseXlsxSharedStrings(ssXML)
+        guard let sheetXML = extractXMLFromZip(data, entryName: "xl/worksheets/sheet1.xml") else { return nil }
+        
+        var fontSizes: [Int: CGFloat] = [:]
+        var fontBold: [Int: Bool] = [:]
+        var borderDefs: [Int: (Bool, Bool, Bool, Bool)] = [:]
+        var cellXfBorder: [Int: Int] = [:]
+        var cellXfFont: [Int: Int] = [:]
+        var cellXfFill: [Int: Int] = [:]
+        var fillColors: [Int: String] = [:]
+        
+        if let stylesXML = extractXMLFromZip(data, entryName: "xl/styles.xml") {
+            for (i, fc) in stylesXML.components(separatedBy: "<font>").dropFirst().enumerated() {
+                if let m = fc.range(of: "<sz val=\""), let e = fc.range(of: "\"", range: m.upperBound..<fc.endIndex) {
+                    fontSizes[i] = CGFloat(Double(fc[m.upperBound..<e.lowerBound]) ?? 11)
+                }
+                fontBold[i] = fc.contains("<b/>") || fc.contains("<b ")
+            }
+            for (i, bc) in stylesXML.components(separatedBy: "<border>").dropFirst().enumerated() {
+                borderDefs[i] = (bc.contains("<top style="), bc.contains("<bottom style="), bc.contains("<left style="), bc.contains("<right style="))
+            }
+            if let xs = stylesXML.range(of: "<cellXfs"), let xe = stylesXML.range(of: "</cellXfs>", range: xs.upperBound..<stylesXML.endIndex) {
+                for (i, xc) in String(stylesXML[xs.upperBound..<xe.lowerBound]).components(separatedBy: "<xf ").dropFirst().enumerated() {
+                    if let m = xc.range(of: "fontId=\""), let e = xc.range(of: "\"", range: m.upperBound..<xc.endIndex) { cellXfFont[i] = Int(xc[m.upperBound..<e.lowerBound]) ?? 0 }
+                    if let m = xc.range(of: "borderId=\""), let e = xc.range(of: "\"", range: m.upperBound..<xc.endIndex) { cellXfBorder[i] = Int(xc[m.upperBound..<e.lowerBound]) ?? 0 }
+                    if let m = xc.range(of: "fillId=\""), let e = xc.range(of: "\"", range: m.upperBound..<xc.endIndex) { cellXfFill[i] = Int(xc[m.upperBound..<e.lowerBound]) ?? 0 }
+                }
+            }
+            for (i, fc) in stylesXML.components(separatedBy: "<fill>").dropFirst().enumerated() {
+                if let m = fc.range(of: "rgb=\""), let e = fc.range(of: "\"", range: m.upperBound..<fc.endIndex) { fillColors[i] = "#" + String(fc[m.upperBound..<e.lowerBound]).suffix(6) }
+            }
+        }
+        
+        var colWidths: [CGFloat] = []
+        if let cm = sheetXML.range(of: "<cols>"), let ce = sheetXML.range(of: "</cols>", range: cm.upperBound..<sheetXML.endIndex) {
+            var widths: [Int: CGFloat] = [:]
+            for cd in String(sheetXML[cm.upperBound..<ce.lowerBound]).components(separatedBy: "<col ").dropFirst() {
+                guard let mnR = cd.range(of: "min=\""), let mnE = cd.range(of: "\"", range: mnR.upperBound..<cd.endIndex),
+                      let mxR = cd.range(of: "max=\""), let mxE = cd.range(of: "\"", range: mxR.upperBound..<cd.endIndex),
+                      let wR = cd.range(of: "width=\""), let wE = cd.range(of: "\"", range: wR.upperBound..<cd.endIndex),
+                      let mn = Int(cd[mnR.upperBound..<mnE.lowerBound]), let mx = Int(cd[mxR.upperBound..<mxE.lowerBound]),
+                      let w = Double(cd[wR.upperBound..<wE.lowerBound]) else { continue }
+                for c in mn...mx { widths[c] = CGFloat(w * 7 + 5) }
+            }
+            if !widths.isEmpty { let mc = widths.keys.max() ?? 4; colWidths = (1...mc).map { widths[$0] ?? 60 } }
+        }
+        if colWidths.isEmpty { colWidths = [60, 60, 60, 60] }
+        
+        var mergeSet = Set<String>()
+        var mergeInfo: [String: (Int, Int)] = [:]
+        if let mm = sheetXML.range(of: "<mergeCells"), let me = sheetXML.range(of: "</mergeCells>", range: mm.upperBound..<sheetXML.endIndex) {
+            for r in String(sheetXML[mm.upperBound..<me.lowerBound]).components(separatedBy: "mergeCell ref=\"").dropFirst() {
+                guard let eq = r.range(of: "\"") else { continue }
+                let parts = String(r[r.startIndex..<eq.lowerBound]).components(separatedBy: ":")
+                guard parts.count == 2 else { continue }
+                let (c1, r1) = parseCellRef(parts[0]); let (c2, r2) = parseCellRef(parts[1])
+                mergeInfo["\(c1),\(r1)"] = (c2 - c1 + 1, r2 - r1 + 1)
+                for mc in c1...c2 { for mr in r1...r2 { if mc != c1 || mr != r1 { mergeSet.insert("\(mc),\(mr)") } } }
+            }
+        }
+        
+        struct HtmlCell { let col: Int; let row: Int; let text: String; let styleId: Int }
+        var cells: [HtmlCell] = []
+        var rowHeights: [Int: CGFloat] = [:]
+        
+        for rc in sheetXML.components(separatedBy: "<row ").dropFirst() {
+            guard let rt = rc.range(of: ">") else { continue }
+            let ra = String(rc[rc.startIndex..<rt.lowerBound])
+            guard let rm = ra.range(of: "r=\""), let re = ra.range(of: "\"", range: rm.upperBound..<ra.endIndex),
+                  let rowNum = Int(ra[rm.upperBound..<re.lowerBound]) else { continue }
+            if let hm = ra.range(of: "ht=\""), let he = ra.range(of: "\"", range: hm.upperBound..<ra.endIndex),
+               let ht = Double(ra[hm.upperBound..<he.lowerBound]) { rowHeights[rowNum] = CGFloat(ht) }
+            
+            for cc in rc.components(separatedBy: "<c ").dropFirst() {
+                guard let ct = cc.range(of: ">") else { continue }
+                let ca = String(cc[cc.startIndex..<ct.lowerBound]); let cb = String(cc[ct.upperBound..<cc.endIndex])
+                guard let cr = ca.range(of: "r=\""), let cre = ca.range(of: "\"", range: cr.upperBound..<ca.endIndex) else { continue }
+                let (col, _) = parseCellRef(String(ca[cr.upperBound..<cre.lowerBound]))
+                var sid = 0
+                if let sm = ca.range(of: "s=\""), let se = ca.range(of: "\"", range: sm.upperBound..<ca.endIndex) { sid = Int(ca[sm.upperBound..<se.lowerBound]) ?? 0 }
+                let isShared = ca.contains("t=\"s\"")
+                var text = ""
+                if let vs = cb.range(of: "<v>"), let ve = cb.range(of: "</v>") {
+                    let val = String(cb[vs.upperBound..<ve.lowerBound])
+                    if isShared, let idx = Int(val), idx < sharedStrings.count { text = sharedStrings[idx] } else { text = val }
+                } else if let is = cb.range(of: "<is>"), let ie = cb.range(of: "</is>") {
+                    let isc = String(cb[is.upperBound..<ie.lowerBound])
+                    if let ts = isc.range(of: "<t"), let te = isc.range(of: "</t>") {
+                        let at = isc[ts.upperBound...]; if let gt = at.range(of: ">") { text = String(at[gt.upperBound..<te.lowerBound]) }
+                    }
+                }
+                cells.append(HtmlCell(col: col, row: rowNum, text: text, styleId: sid))
+            }
+        }
+        
+        var html = "<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
+        html += "body{margin:0;padding:10px;font-family:'SimSun','Songti SC',serif;font-size:11px;}"
+        html += "table{border-collapse:collapse;table-layout:fixed;}"
+        html += "td{padding:2px 4px;vertical-align:middle;word-wrap:break-word;overflow:hidden;}"
+        html += "</style></head><body><table><colgroup>"
+        for w in colWidths { html += "<col style='width:\(w)px'>" }
+        html += "</colgroup>"
+        
+        var cellMap: [String: HtmlCell] = [:]
+        for c in cells { cellMap["\(c.col),\(c.row)"] = c }
+        let maxRow = cells.map { $0.row }.max() ?? 1
+        let maxCol = colWidths.count
+        
+        for r in 1...maxRow {
+            let rh = rowHeights[r] ?? 20
+            html += "<tr style='height:\(rh)px'>"
+            for c in 1...maxCol {
+                let key = "\(c),\(r)"
+                if mergeSet.contains(key) { continue }
+                let cell = cellMap[key]; let text = cell?.text ?? ""; let sid = cell?.styleId ?? 0
+                let fid = cellXfFont[sid] ?? 0; let bid = cellXfBorder[sid] ?? 0; let fiid = cellXfFill[sid] ?? 0
+                let fs = fontSizes[fid] ?? 11; let bold = fontBold[fid] ?? false
+                let bd = borderDefs[bid] ?? (false, false, false, false); let bg = fillColors[fiid]
+                var style = "font-size:\(fs)px;"
+                if bold { style += "font-weight:bold;" }
+                if let b = bg, b != "000000" { style += "background-color:\(b);" }
+                if bd.0 { style += "border-top:1px solid #000;" }; if bd.1 { style += "border-bottom:1px solid #000;" }
+                if bd.2 { style += "border-left:1px solid #000;" }; if bd.3 { style += "border-right:1px solid #000;" }
+                var attrs = ""
+                if let mg = mergeInfo[key] {
+                    if mg.0 > 1 { attrs += " colspan='\(mg.0)'" }
+                    if mg.1 > 1 { attrs += " rowspan='\(mg.1)'" }
+                }
+                let esc = text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\n", with: "<br>")
+                html += "<td\(attrs) style='\(style)'>\(esc)</td>"
+            }
+            html += "</tr>"
+        }
+        html += "</table></body></html>"
+        return html
+    }
+    
+    // MARK: - HTML to PDF via WebKit
+    
+    private static func renderHtmlToPdf(_ html: String, pageWidth: CGFloat = 595.2, pageHeight: CGFloat = 841.8) -> Data? {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Data?
+        DispatchQueue.main.async {
+            let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight * 3))
+            webView.loadHTMLString(html, baseURL: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                let renderer = UIPrintPageRenderer()
+                renderer.addPrintFormatter(webView.viewPrintFormatter(), startingAtPageAt: 0)
+                let rect = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
+                renderer.setValue(NSValue(cgRect: rect), forKey: "paperRect")
+                renderer.setValue(NSValue(cgRect: rect), forKey: "printableRect")
+                let data = NSMutableData()
+                UIGraphicsBeginPDFContextToData(data, rect, nil)
+                for i in 0..<renderer.numberOfPages {
+                    UIGraphicsBeginPDFPage()
+                    renderer.drawPage(at: i, in: UIGraphicsGetPDFContextBounds())
+                }
+                UIGraphicsEndPDFContext()
+                result = data as Data
+                semaphore.signal()
+            }
+        }
+        _ = semaphore.wait(timeout: .now() + 30)
+        return result
+    }
+
+    // MARK: - Main PDF Generation
+    
     static func generateFullPDF(customer: Customer) -> Data? {
-        let pageRect = CGRect(x: 0, y: 0, width: 595.2, height: 841.8)
-        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 595.2, height: 841.8))
         return renderer.pdfData { context in
-            // 1. Cover page
-            if let coverData = generateCoverPage(customer: customer),
-               let coverPage = PDFDocument(data: coverData) {
-                for i in 0..<coverPage.pageCount {
-                    if let page = coverPage.page(at: i) {
-                        context.beginPage()
-                        drawPDFPage(page, in: context)
-                    }
-                }
+            if let d = generateCoverPage(customer: customer), let doc = PDFDocument(data: d) {
+                for i in 0..<doc.pageCount { if let page = doc.page(at: i) { context.beginPage(); drawPDFPage(page, in: context) } }
             }
-            // 2. TOC
-            if let tocData = generateTOC(customer: customer),
-               let tocPage = PDFDocument(data: tocData) {
-                for i in 0..<tocPage.pageCount {
-                    if let page = tocPage.page(at: i) {
-                        context.beginPage()
-                        drawPDFPage(page, in: context)
-                    }
-                }
+            if let d = generateTOC(customer: customer), let doc = PDFDocument(data: d) {
+                for i in 0..<doc.pageCount { if let page = doc.page(at: i) { context.beginPage(); drawPDFPage(page, in: context) } }
             }
-            // 3. Identity table
-            if let tableData = generateIdentityTable(customer: customer),
-               let tablePage = PDFDocument(data: tableData) {
-                for i in 0..<tablePage.pageCount {
-                    if let page = tablePage.page(at: i) {
-                        context.beginPage()
-                        drawPDFPage(page, in: context)
-                    }
-                }
+            if let d = generateIdentityTable(customer: customer), let doc = PDFDocument(data: d) {
+                for i in 0..<doc.pageCount { if let page = doc.page(at: i) { context.beginPage(); drawPDFPage(page, in: context) } }
             }
-            // 4. Income table
-            if let incomeData = generateIncomeTable(customer: customer),
-               let incomePage = PDFDocument(data: incomeData) {
-                for i in 0..<incomePage.pageCount {
-                    if let page = incomePage.page(at: i) {
-                        context.beginPage()
-                        drawPDFPage(page, in: context)
-                    }
-                }
+            if let d = generateIncomeTable(customer: customer), let doc = PDFDocument(data: d) {
+                for i in 0..<doc.pageCount { if let page = doc.page(at: i) { context.beginPage(); drawPDFPage(page, in: context) } }
             }
-            // 5. Append ALL customer documents (including imported templates)
+            
             var debugLines: [String] = []
             debugLines.append("Total documents: \(customer.documents.count)")
             
@@ -941,43 +902,52 @@ struct PDFGenerator {
                 if dataToAppend == nil && !docItem.filePath.isEmpty {
                     dataToAppend = try? Data(contentsOf: URL(fileURLWithPath: docItem.filePath))
                 }
-                guard let data = dataToAppend else {
-                    debugLines.append("[NIL] \(docItem.fileName) type=\(docItem.documentType)")
-                    continue
-                }
+                guard let data = dataToAppend else { debugLines.append("[NIL] \(docItem.fileName)"); continue }
                 
                 let isTemplate = DocumentTypeRegistry.templateTypes.contains(where: { $0.id == docItem.documentType })
-                debugLines.append("\(isTemplate ? "[TPL]" : "[DOC]") \(docItem.fileName) type=\(docItem.documentType) size=\(data.count)")
+                debugLines.append("\(isTemplate ? "[TPL]" : "[DOC]") \(docItem.fileName) size=\(data.count)")
                 
-                if isTemplate {
                 if isTemplate {
                     let isXlsx = data.count > 4 && data[0] == 0x50 && data[1] == 0x4B
                     if isXlsx {
-                        renderXlsxAsFormattedTable(data, customer: customer, in: context)
-                        debugLines.append("  -> Rendered as formatted table")
-                    } else {
-                        let extractedText = extractTextFromDocx(data)
-                        if let text = extractedText, !text.isEmpty {
-                            let filled = fillPlaceholders(in: text, customer: customer)
-                            let title = DocumentTypeRegistry.getType(byId: docItem.documentType)?.name
-                            debugLines.append("  -> OK: \(text.count) chars")
-                            renderTextAsPDFPages(filled, title: title, in: context)
+                        let modifiedData = replaceXlsxPlaceholders(data, customer: customer) ?? data
+                        debugLines.append("  -> ZIP: \(modifiedData.count) bytes")
+                        if let html = convertXlsxToHtml(modifiedData) {
+                            debugLines.append("  -> HTML: \(html.count) chars")
+                            if let pdfData = renderHtmlToPdf(html), let pdfDoc = PDFDocument(data: pdfData) {
+                                for i in 0..<pdfDoc.pageCount { if let page = pdfDoc.page(at: i) { context.beginPage(); drawPDFPage(page, in: context) } }
+                                debugLines.append("  -> OK: \(pdfDoc.pageCount) pages")
+                            } else {
+                                debugLines.append("  -> HTML->PDF FAILED")
+                                if let ss = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") {
+                                    let text = parseXlsxSharedStrings(ss).joined(separator: "\n")
+                                    if !text.isEmpty { renderTextAsPDFPages(fillPlaceholders(in: text, customer: customer), title: nil, in: context) }
+                                }
+                            }
                         } else {
-                            debugLines.append("  -> Extract FAILED, appending raw")
+                            debugLines.append("  -> HTML FAILED")
+                            if let ss = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") {
+                                let text = parseXlsxSharedStrings(ss).joined(separator: "\n")
+                                if !text.isEmpty { renderTextAsPDFPages(fillPlaceholders(in: text, customer: customer), title: nil, in: context) }
+                            }
+                        }
+                    } else {
+                        let extracted = extractTextFromDocx(data)
+                        if let text = extracted, !text.isEmpty {
+                            let title = DocumentTypeRegistry.getType(byId: docItem.documentType)?.name
+                            renderTextAsPDFPages(fillPlaceholders(in: text, customer: customer), title: title, in: context)
+                            debugLines.append("  -> OK: \(text.count) chars")
+                        } else {
+                            debugLines.append("  -> FAILED, raw")
                             appendDocData(data, fileName: docItem.fileName, in: context)
                         }
                     }
                 } else {
                     appendDocData(data, fileName: docItem.fileName, in: context)
                 }
-                } else {
-                    appendDocData(data, fileName: docItem.fileName, in: context)
-                }
             }
             
-            // Debug page at end of PDF
-            let debugText = debugLines.joined(separator: "\n")
-            renderTextAsPDFPages(debugText, title: "Debug Info", in: context)
+            renderTextAsPDFPages(debugLines.joined(separator: "\n"), title: "Debug Info", in: context)
         }
     }
 }
