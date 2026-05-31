@@ -1,6 +1,7 @@
 import UIKit
 import PDFKit
 import Compression
+import zlib
 
 struct PDFGenerator {
 
@@ -156,41 +157,51 @@ struct PDFGenerator {
     }
 
     private static func inflateRawDeflate(_ data: Data) -> String? {
-        // Use Compression framework for raw deflate decompression
-        // COMPRESSION_ZLIB auto-detects zlib header vs raw deflate
-        let srcSize = data.count
-        var dstSize = max(srcSize * 10, 65536)
-        var result: String? = nil
+        // Use libz with windowBits=-15 for raw deflate (no zlib header)
+        var stream = z_stream()
+        stream.zalloc = nil
+        stream.zfree = nil
+        stream.opaque = nil
         
-        for attempt in 0..<3 {
-            let dstBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: dstSize)
-            defer { dstBuf.deallocate() }
+        // windowBits = -15 means raw deflate, no header
+        let initResult = inflateInit2_(&stream, -15, zlibVersion(), Int32(MemoryLayout<z_stream>.size))
+        guard initResult == Z_OK else { return nil }
+        defer { inflateEnd(&stream) }
+        
+        var srcBytes = [UInt8](data)
+        let dstCapacity = max(data.count * 10, 65536)
+        var dstBuf = [UInt8](repeating: 0, count: dstCapacity)
+        var output = Data()
+        
+        stream.next_in = &srcBytes
+        stream.avail_in = uInt(srcBytes.count)
+        
+        repeat {
+            stream.next_out = &dstBuf
+            stream.avail_out = uInt(dstCapacity)
             
-            let actualSize = data.withUnsafeBytes { (srcPtr: UnsafeRawBufferPointer) -> Int in
-                guard let srcBase = srcPtr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return -1 }
-                return compression_decode_buffer(
-                    dstBuf, dstSize,
-                    srcBase, srcSize,
-                    nil,
-                    COMPRESSION_ZLIB
-                )
+            let ret = inflate(&stream, Z_NO_FLUSH)
+            
+            if ret == Z_OK || ret == Z_STREAM_END {
+                let written = dstCapacity - Int(stream.avail_out)
+                if written > 0 {
+                    output.append(contentsOf: dstBuf[0..<written])
+                }
             }
             
-            if actualSize > 0, let str = String(bytes: UnsafeBufferPointer(start: dstBuf, count: actualSize), encoding: .utf8), !str.isEmpty {
-                result = str
-                break
-            }
-            
-            // Failed - try with larger buffer
-            if attempt == 0 { dstSize = max(srcSize * 50, 524288) }
-            if attempt == 1 { dstSize = max(srcSize * 100, 1048576) }
+            if ret == Z_STREAM_END { break }
+            if ret != Z_OK { return nil }
+        } while stream.avail_out == 0
+        
+        if let str = String(data: output, encoding: .utf8), !str.isEmpty {
+            return str
         }
         
-        // Fallback: try as raw UTF-8 (stored, not deflated)
-        if result == nil, let str = String(data: data, encoding: .utf8), str.contains("<") {
-            result = str
+        // Fallback: try raw UTF-8 (stored, not deflated)
+        if let str = String(data: data, encoding: .utf8), str.contains("<") {
+            return str
         }
-        return result
+        return nil
     }
 
     // MARK: - OLE2 (.et WPS) Support
