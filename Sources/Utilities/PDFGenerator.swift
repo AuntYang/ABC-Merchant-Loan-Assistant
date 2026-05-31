@@ -98,7 +98,7 @@ struct PDFGenerator {
         var names: [String] = []
         while offset + 46 <= bytes.count {
             let sig = UInt32(bytes[offset]) | UInt32(bytes[offset+1]) << 8 | UInt32(bytes[offset+2]) << 16 | UInt32(bytes[offset+3]) << 24
-            guard sig == 0x02014B45 else { break }
+            guard sig == 0x02014B50 else { break }
             let nameLen = Int(UInt16(bytes[offset+28]) | UInt16(bytes[offset+29]) << 8)
             let extraLen = Int(UInt16(bytes[offset+30]) | UInt16(bytes[offset+31]) << 8)
             let commentLen = Int(UInt16(bytes[offset+32]) | UInt16(bytes[offset+33]) << 8)
@@ -121,7 +121,7 @@ struct PDFGenerator {
         var offset = cdOffset
         while offset + 46 <= bytes.count {
             let sig = UInt32(bytes[offset]) | UInt32(bytes[offset+1]) << 8 | UInt32(bytes[offset+2]) << 16 | UInt32(bytes[offset+3]) << 24
-            guard sig == 0x02014B45 else { break }
+            guard sig == 0x02014B50 else { break }
             let flags = UInt16(bytes[offset+8]) | UInt16(bytes[offset+9]) << 8
             let compMethod = UInt16(bytes[offset+10]) | UInt16(bytes[offset+11]) << 8
             let compSize = Int(UInt32(bytes[offset+20]) | UInt32(bytes[offset+21]) << 8 | UInt32(bytes[offset+22]) << 16 | UInt32(bytes[offset+23]) << 24)
