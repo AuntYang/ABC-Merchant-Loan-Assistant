@@ -159,10 +159,10 @@ struct PDFGenerator {
         let dstBufSize = max(data.count * 10, 65536)
         var dstBuf = [UInt8](repeating: 0, count: dstBufSize)
         let srcBuf = [UInt8](data)
-        let decompressed = data.withUnsafeBytes { srcRaw -> Int in
-            let srcPtr = srcRaw.bindMemory(to: UInt8.self).baseAddress!
-            return dstBuf.withUnsafeMutableBytes { dstRaw -> Int in
-                let dstPtr = dstRaw.bindMemory(to: UInt8.self).baseAddress!
+        let decompressed = data.withUnsafeBytes { (_ srcRaw: UnsafeRawBufferPointer) -> Int in
+            guard let srcPtr = srcRaw.baseAddress else { return -1 }
+            return dstBuf.withUnsafeMutableBytes { (_ dstRaw: UnsafeMutableRawBufferPointer) -> Int in
+                guard let dstPtr = dstRaw.baseAddress else { return -1 }
                 var stream = compression_stream()
                 var status = compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB)
                 guard status == COMPRESSION_STATUS_OK else { return -1 }
@@ -232,7 +232,7 @@ struct PDFGenerator {
                 visited.insert(secID)
                 let offset = (secID + 1) * sectorSize
                 guard offset + sectorSize <= bytes.count else { break }
-                result.append(bytes[offset..<(offset + sectorSize)])
+                result.append(contentsOf: bytes[offset..<(offset + sectorSize)])
                 secID = Int(fat[secID])
             }
             return result
