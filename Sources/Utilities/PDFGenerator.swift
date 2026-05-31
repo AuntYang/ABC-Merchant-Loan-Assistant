@@ -456,18 +456,18 @@ struct PDFGenerator {
             let titleFont = UIFont.boldSystemFont(ofSize: 28)
             let subtitleFont = UIFont.systemFont(ofSize: 18)
             let infoFont = UIFont.systemFont(ofSize: 16)
-            let title = "鍟嗘埛璐锋璧勬枡" as NSString
+            let title = "商户贷款资料" as NSString
             let titleSize = title.size(withAttributes: [.font: titleFont])
             title.draw(at: CGPoint(x: (pageRect.width - titleSize.width) / 2, y: 200), withAttributes: [.font: titleFont])
-            let subtitle = "灏侀潰" as NSString
+            let subtitle = "封面" as NSString
             let subtitleSize = subtitle.size(withAttributes: [.font: subtitleFont])
             subtitle.draw(at: CGPoint(x: (pageRect.width - subtitleSize.width) / 2, y: 250), withAttributes: [.font: subtitleFont])
             let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = "yyyy骞碝M鏈坉d鏃?
+            dateFormatter.dateFormat = "yyyy年MM月dd日"
             dateFormatter.locale = Locale(identifier: "zh_CN")
             let infoLines = [
-                "瀹㈡埛濮撳悕锛歕(customer.name)",
-                "寤烘。鏃ユ湡锛歕(dateFormatter.string(from: customer.createdAt))"
+                "客户姓名：\(customer.name)",
+                "建档日期：\(dateFormatter.string(from: customer.createdAt))"
             ]
             var y: CGFloat = 350
             for line in infoLines {
@@ -485,15 +485,15 @@ struct PDFGenerator {
             context.beginPage()
             let titleFont = UIFont.boldSystemFont(ofSize: 22)
             let checkFont = UIFont.systemFont(ofSize: 12)
-            let title = "璧勬枡娓呭崟鐩綍" as NSString
+            let title = "资料清单目录" as NSString
             let titleSize = title.size(withAttributes: [.font: titleFont])
             title.draw(at: CGPoint(x: (pageRect.width - titleSize.width) / 2, y: 50), withAttributes: [.font: titleFont])
-            let customerInfo = "瀹㈡埛锛歕(customer.name)" as NSString
+            let customerInfo = "客户：\(customer.name)" as NSString
             customerInfo.draw(at: CGPoint(x: 50, y: 90), withAttributes: [.font: UIFont.systemFont(ofSize: 15)])
             var y: CGFloat = 130
             for docType in DocumentTypeRegistry.allTypes {
                 let hasDoc = customer.documents.contains { $0.documentType == docType.id }
-                let checkmark = hasDoc ? "鈽? : "鈽?
+                let checkmark = hasDoc ? "☑" : "☐"
                 let line = "\(checkmark) \(docType.index). \(docType.name)"
                 let nsLine = line as NSString
                 nsLine.draw(at: CGPoint(x: 50, y: y), withAttributes: [
@@ -517,17 +517,17 @@ struct PDFGenerator {
             let titleFont = UIFont.boldSystemFont(ofSize: 18)
             let headerFont = UIFont.boldSystemFont(ofSize: 12)
             let cellFont = UIFont.systemFont(ofSize: 11)
-            let title = "涓汉瀹㈡埛韬唤璇嗗埆鍜屽敖鑱岃皟鏌ヤ俊鎭〃" as NSString
+            let title = "个人客户身份识别和尽职调查信息表" as NSString
             let titleSize = title.size(withAttributes: [.font: titleFont])
             title.draw(at: CGPoint(x: (pageRect.width - titleSize.width) / 2, y: 40), withAttributes: [.font: titleFont])
             let tableData: [(String, String, String, String)] = [
-                ("瀹㈡埛濮撳悕", customer.name, "閰嶅伓濮撳悕", customer.spouseName),
-                ("瀹㈡埛鎬у埆", customer.gender, "閰嶅伓鎬у埆", customer.spouseGender),
-                ("韬唤璇佸彿", customer.idNumber, "閰嶅伓韬唤璇佸彿", customer.spouseIdNumber),
-                ("璇佷欢鏈夋晥鏈?, customer.idExpiry, "閰嶅伓璇佷欢鏈夋晥鏈?, customer.spouseIdExpiry),
-                ("鑱旂郴鐢佃瘽", customer.phone, "閰嶅伓鐢佃瘽", customer.spousePhone),
-                ("鐜颁綇鍧€", customer.address, "", ""),
-                ("钀ヤ笟鎵х収绫诲瀷", customer.businessLicenseType, "", "")
+                ("客户姓名", customer.name, "配偶姓名", customer.spouseName),
+                ("客户性别", customer.gender, "配偶性别", customer.spouseGender),
+                ("身份证号", customer.idNumber, "配偶身份证号", customer.spouseIdNumber),
+                ("证件有效期", customer.idExpiry, "配偶证件有效期", customer.spouseIdExpiry),
+                ("联系电话", customer.phone, "配偶电话", customer.spousePhone),
+                ("现住址", customer.address, "", ""),
+                ("营业执照类型", customer.businessLicenseType, "", "")
             ]
             var y: CGFloat = 90
             let col1X: CGFloat = 40; let col2X: CGFloat = 160; let col3X: CGFloat = 320; let col4X: CGFloat = 440
@@ -559,13 +559,13 @@ struct PDFGenerator {
             let titleFont = UIFont.boldSystemFont(ofSize: 18)
             let headerFont = UIFont.boldSystemFont(ofSize: 12)
             let cellFont = UIFont.systemFont(ofSize: 11)
-            let title = "缁忚惀鏀跺叆璁ゅ畾琛? as NSString
+            let title = "经营收入认定表" as NSString
             let titleSize = title.size(withAttributes: [.font: titleFont])
             title.draw(at: CGPoint(x: (pageRect.width - titleSize.width) / 2, y: 40), withAttributes: [.font: titleFont])
             let rows: [(String, String)] = [
-                ("瀹㈡埛濮撳悕", customer.name), ("钀ヤ笟鎵х収鍚嶇О", customer.businessName),
-                ("钀ヤ笟鎵х収绫诲瀷", customer.businessLicenseType), ("娉曞畾浠ｈ〃浜?, customer.businessLegalRepresentative),
-                ("缁忚惀鍦板潃", customer.businessAddress)
+                ("客户姓名", customer.name), ("营业执照名称", customer.businessName),
+                ("营业执照类型", customer.businessLicenseType), ("法定代表人", customer.businessLegalRepresentative),
+                ("经营地址", customer.businessAddress)
             ]
             var y: CGFloat = 90
             for (label, value) in rows {
