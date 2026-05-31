@@ -562,7 +562,15 @@ struct PDFGenerator {
         
         guard let ssXML = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") else { return nil }
         let sharedStrings = parseXlsxSharedStrings(ssXML)
-        var finalStrings = sharedStrings         if let customer = customer {             let values = customer.autoTemplateValues()             for i in 0..<finalStrings.count {                 for (key, value) in values {                     finalStrings[i] = finalStrings[i].replacingOccurrences(of: "{{" + key + "}}", with: value)                 }             }         }
+        var finalStrings = sharedStrings
+        if let customer = customer {
+            let values = customer.autoTemplateValues()
+            for i in 0..<finalStrings.count {
+                for (key, value) in values {
+                    finalStrings[i] = finalStrings[i].replacingOccurrences(of: "{{" + key + "}}", with: value)
+                }
+            }
+        }
         
         // Try sheet1 first
         guard var sheetXML = extractXMLFromZip(data, entryName: "xl/worksheets/sheet1.xml") else { return nil }
