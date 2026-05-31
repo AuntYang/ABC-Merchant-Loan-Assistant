@@ -382,6 +382,25 @@ struct PDFGenerator {
 
 
 
+    private static func extractTextFromRawXML(_ data: Data) -> String? {
+        let bodyStart = "<w:body".data(using: .utf8)!
+        let bodyEnd = "</w:body>".data(using: .utf8)!
+        if let sr = data.range(of: bodyStart), let er = data.range(of: bodyEnd, in: sr.lowerBound..<data.count) {
+            if let xml = String(data: data.subdata(in: sr.lowerBound..<er.upperBound), encoding: .utf8) {
+                return extractTextFromXMLContent(xml)
+            }
+        }
+        let sstStart = "<sst".data(using: .utf8)!
+        let sstEnd = "</sst>".data(using: .utf8)!
+        if let sr = data.range(of: sstStart), let er = data.range(of: sstEnd, in: sr.lowerBound..<data.count) {
+            if let xml = String(data: data.subdata(in: sr.lowerBound..<er.upperBound), encoding: .utf8) {
+                let strings = parseXlsxSharedStrings(xml)
+                if !strings.isEmpty { return strings.joined(separator: "\n") }
+            }
+        }
+        return nil
+    }
+
     private static func parseCellRef(_ ref: String) -> (col: Int, row: Int) {
         let colStr = ref.prefix(while: { $0.isLetter })
         let rowStr = ref.drop(while: { $0.isLetter })
@@ -579,14 +598,6 @@ struct PDFGenerator {
     }
 
 
-    // MARK: - Cell Reference Parser
-    
-    private static func parseCellRef(_ ref: String) -> (col: Int, row: Int) {
-        let colStr = ref.prefix(while: { $0.isLetter })
-        let rowStr = ref.drop(while: { $0.isLetter })
-        return (colIndex(colStr) ?? 0, Int(rowStr) ?? 0)
-    }
-    
     // MARK: - XLSX Placeholder Replacement (Rebuild ZIP from scratch)
     
     private static func replaceXlsxPlaceholders(_ data: Data, customer: Customer) -> Data? {
@@ -600,7 +611,7 @@ struct PDFGenerator {
         
         struct RawEntry {
             let name: String; let compMethod: UInt16; let compSize: Int; let uncompSize: Int
-            let localHeaderSize: Int; let localDataStart: Int; let cdNameLen: Int; let cdExtraLen: Int; let cdCommentLen: Int
+            let localHeaderSize: Int; let localDataStart: Int
         }
         var entries: [RawEntry] = []
         var off = cdOffset
@@ -622,8 +633,7 @@ struct PDFGenerator {
             guard nameStart + nl <= bytes.count else { break }
             let name = String(bytes: bytes[nameStart..<(nameStart + nl)], encoding: .utf8) ?? ""
             entries.append(RawEntry(name: name, compMethod: cm, compSize: cs, uncompSize: us,
-                                    localHeaderSize: 30 + lnl + lel, localDataStart: localOff + 30 + lnl + lel,
-                                    cdNameLen: nl, cdExtraLen: el, cdCommentLen: cl))
+                                    localHeaderSize: 30 + lnl + lel, localDataStart: localOff + 30 + lnl + lel))
             off += 46 + nl + el + cl
         }
         
@@ -646,7 +656,6 @@ struct PDFGenerator {
                         xmlStr = xmlStr.replacingOccurrences(of: "{{" + key + "}}", with: value)
                     }
                     if let newData = xmlStr.data(using: .utf8) {
-                        // Store uncompressed for maximum compatibility
                         newCompSize = newData.count
                         newUncompSize = newData.count
                         newCompMethod = 0
@@ -703,7 +712,7 @@ struct PDFGenerator {
         newZip.append(eocdBytes)
         return newZip
     }
-    
+
     // MARK: - XLSX to HTML Conversion
     
     private static func convertXlsxToHtml(_ data: Data) -> String? {
@@ -795,8 +804,8 @@ struct PDFGenerator {
                 if let vs = cb.range(of: "<v>"), let ve = cb.range(of: "</v>") {
                     let val = String(cb[vs.upperBound..<ve.lowerBound])
                     if isShared, let idx = Int(val), idx < sharedStrings.count { text = sharedStrings[idx] } else { text = val }
-                } else if let is = cb.range(of: "<is>"), let ie = cb.range(of: "</is>") {
-                    let isc = String(cb[is.upperBound..<ie.lowerBound])
+                } else if let isTag = cb.range(of: "<is>"), let isTagEnd = cb.range(of: "</is>") {
+                    let isc = String(cb[isTag.upperBound..<isTagEnd.lowerBound])
                     if let ts = isc.range(of: "<t"), let te = isc.range(of: "</t>") {
                         let at = isc[ts.upperBound...]; if let gt = at.range(of: ">") { text = String(at[gt.upperBound..<te.lowerBound]) }
                     }
@@ -846,7 +855,7 @@ struct PDFGenerator {
         html += "</table></body></html>"
         return html
     }
-    
+
     // MARK: - HTML to PDF via WebKit
     
     private static func renderHtmlToPdf(_ html: String, pageWidth: CGFloat = 595.2, pageHeight: CGFloat = 841.8) -> Data? {
