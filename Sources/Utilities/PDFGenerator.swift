@@ -942,17 +942,11 @@ struct PDFGenerator {
                 debugLines.append("\(isTemplate ? "[TPL]" : "[DOC]") \(docItem.fileName) type=\(docItem.documentType) size=\(data.count)")
                 
                 if isTemplate {
-                    // Check if xlsx file - use formatted table renderer
+                if isTemplate {
                     let isXlsx = data.count > 4 && data[0] == 0x50 && data[1] == 0x4B
                     if isXlsx {
-                        // Fill placeholders in shared strings first, then render as table
-                        if let filledData = fillXlsxPlaceholders(data, customer: customer) {
-                            renderXlsxAsFormattedTable(filledData, customer: customer, in: context)
-                            debugLines.append("  -> Rendered as formatted table")
-                        } else {
-                            renderXlsxAsFormattedTable(data, customer: customer, in: context)
-                            debugLines.append("  -> Rendered as table (placeholder fill failed)")
-                        }
+                        renderXlsxAsFormattedTable(data, customer: customer, in: context)
+                        debugLines.append("  -> Rendered as formatted table")
                     } else {
                         let extractedText = extractTextFromDocx(data)
                         if let text = extractedText, !text.isEmpty {
@@ -966,9 +960,8 @@ struct PDFGenerator {
                         }
                     }
                 } else {
-                        debugLines.append("  -> Extract FAILED, appending raw")
-                        appendDocData(data, fileName: docItem.fileName, in: context)
-                    }
+                    appendDocData(data, fileName: docItem.fileName, in: context)
+                }
                 } else {
                     appendDocData(data, fileName: docItem.fileName, in: context)
                 }
@@ -979,3 +972,4 @@ struct PDFGenerator {
             renderTextAsPDFPages(debugText, title: "Debug Info", in: context)
         }
     }
+}
