@@ -671,7 +671,7 @@ struct PDFGenerator {
                       let w = Double(cd[wR.upperBound..<wE.lowerBound]) else { continue }
                 for c in mn...mx { widths[c] = CGFloat(w * 7 + 5) }
             }
-            if !widths.isEmpty { let mc = widths.keys.max() ?? 4; colWidths = (1...mc).map { widths[] ?? 60 } }
+            if !widths.isEmpty { let mc = widths.keys.max() ?? 4; colWidths = (1...mc).map { widths[$0] ?? 60 } }
         }
         if colWidths.isEmpty { colWidths = [60, 60, 60, 60] }
         
@@ -733,7 +733,7 @@ struct PDFGenerator {
         
         var cellMap: [String: HtmlCell] = [:]
         for c in cells { cellMap["\(c.col),\(c.row)"] = c }
-        let maxRow = cells.map { .row }.max() ?? 1
+        let maxRow = cells.map { $0.row }.max() ?? 1
         let maxCol = colWidths.count
         
         for r in 1...maxRow {
@@ -822,7 +822,7 @@ struct PDFGenerator {
                 }
                 guard let data = dataToAppend else { debugLines.append("[NIL] \(docItem.fileName)"); continue }
                 
-                let isTemplate = DocumentTypeRegistry.templateTypes.contains(where: { .id == docItem.documentType })
+                let isTemplate = DocumentTypeRegistry.templateTypes.contains(where: { $0.id == docItem.documentType })
                 debugLines.append("\(isTemplate ? "[TPL]" : "[DOC]") \(docItem.fileName) size=\(data.count)")
                 
                 if isTemplate {
