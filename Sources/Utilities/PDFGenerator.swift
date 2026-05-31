@@ -162,8 +162,6 @@ struct PDFGenerator {
         stream.zalloc = nil
         stream.zfree = nil
         stream.opaque = nil
-        
-        // windowBits = -15 means raw deflate, no header
         let initResult = inflateInit2_(&stream, -15, zlibVersion(), Int32(MemoryLayout<z_stream>.size))
         guard initResult == Z_OK else { return nil }
         defer { inflateEnd(&stream) }
@@ -173,35 +171,34 @@ struct PDFGenerator {
         var dstBuf = [UInt8](repeating: 0, count: dstCapacity)
         var output = Data()
         
-        stream.next_in = &srcBytes
-        stream.avail_in = uInt(srcBytes.count)
-        
-        repeat {
-            stream.next_out = &dstBuf
-            stream.avail_out = uInt(dstCapacity)
-            
-            let ret = inflate(&stream, Z_NO_FLUSH)
-            
-            if ret == Z_OK || ret == Z_STREAM_END {
-                let written = dstCapacity - Int(stream.avail_out)
-                if written > 0 {
-                    output.append(contentsOf: dstBuf[0..<written])
+        return srcBytes.withUnsafeMutableBufferPointer { srcBP in
+            dstBuf.withUnsafeMutableBufferPointer { dstBP in
+                stream.next_in = srcBP.baseAddress!
+                stream.avail_in = uInt(srcBP.count)
+                
+                repeat {
+                    stream.next_out = dstBP.baseAddress!
+                    stream.avail_out = uInt(dstBP.count)
+                    
+                    let ret = inflate(&stream, Z_NO_FLUSH)
+                    
+                    if ret == Z_OK || ret == Z_STREAM_END {
+                        let written = dstBP.count - Int(stream.avail_out)
+                        if written > 0 {
+                            output.append(contentsOf: dstBP[0..<written])
+                        }
+                    }
+                    
+                    if ret == Z_STREAM_END { break }
+                    if ret != Z_OK { return nil }
+                } while stream.avail_out == 0
+                
+                if let str = String(data: output, encoding: .utf8), !str.isEmpty {
+                    return str
                 }
+                return nil
             }
-            
-            if ret == Z_STREAM_END { break }
-            if ret != Z_OK { return nil }
-        } while stream.avail_out == 0
-        
-        if let str = String(data: output, encoding: .utf8), !str.isEmpty {
-            return str
         }
-        
-        // Fallback: try raw UTF-8 (stored, not deflated)
-        if let str = String(data: data, encoding: .utf8), str.contains("<") {
-            return str
-        }
-        return nil
     }
 
     // MARK: - OLE2 (.et WPS) Support
