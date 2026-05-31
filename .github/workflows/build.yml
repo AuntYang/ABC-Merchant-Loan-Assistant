@@ -1,4 +1,4 @@
-﻿name: Build iOS IPA
+name: Build iOS IPA
 
 on:
   push:
@@ -38,7 +38,7 @@ jobs:
           DEVELOPMENT_TEAM="" \
           PROVISIONING_PROFILE_SPECIFIER="" \
           CONFIGURATION_BUILD_DIR="$(pwd)/build/Release-iphoneos" \
-          2>&1 | tail -50
+          2>&1
     
     - name: Verify app bundle
       run: |
