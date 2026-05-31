@@ -583,9 +583,9 @@ struct PDFGenerator {
             let colDefs = colsStr.components(separatedBy: "<col ")
             var widths: [Int: CGFloat] = [:]
             for cd in colDefs.dropFirst() {
-                guard let minR = cd.range(of: "min=\\""), let minE = cd.range(of: "\\"", range: minR.upperBound..<cd.endIndex) else { continue }
-                guard let maxR = cd.range(of: "max=\\""), let maxE = cd.range(of: "\\"", range: maxR.upperBound..<cd.endIndex) else { continue }
-                guard let wR = cd.range(of: "width=\\""), let wE = cd.range(of: "\\"", range: wR.upperBound..<cd.endIndex) else { continue }
+                guard let minR = cd.range(of: "min=\""), let minE = cd.range(of: "\"", range: minR.upperBound..<cd.endIndex) else { continue }
+                guard let maxR = cd.range(of: "max=\""), let maxE = cd.range(of: "\"", range: maxR.upperBound..<cd.endIndex) else { continue }
+                guard let wR = cd.range(of: "width=\""), let wE = cd.range(of: "\"", range: wR.upperBound..<cd.endIndex) else { continue }
                 guard let minC = Int(cd[minR.upperBound..<minE.lowerBound]),
                       let maxC = Int(cd[maxR.upperBound..<maxE.lowerBound]),
                       let w = Double(cd[wR.upperBound..<wE.lowerBound]) else { continue }
@@ -603,9 +603,9 @@ struct PDFGenerator {
         if let mcMatch = sheetXML.range(of: "<mergeCells", range: sheetXML.startIndex..<sheetXML.endIndex),
            let mcEnd = sheetXML.range(of: "</mergeCells>", range: mcMatch.upperBound..<sheetXML.endIndex) {
             let mcStr = String(sheetXML[mcMatch.upperBound..<mcEnd.lowerBound])
-            let refs = mcStr.components(separatedBy: "mergeCell ref=\\"")
+            let refs = mcStr.components(separatedBy: "mergeCell ref=\"")
             for r in refs.dropFirst() {
-                guard let endQ = r.range(of: "\\"") else { continue }
+                guard let endQ = r.range(of: "\"") else { continue }
                 merges.append(String(r[r.startIndex..<endQ.lowerBound]))
             }
         }
@@ -616,13 +616,13 @@ struct PDFGenerator {
         for rc in rowComponents.dropFirst() {
             guard let rowEndTag = rc.range(of: ">") else { continue }
             let rowAttrs = String(rc[rc.startIndex..<rowEndTag.lowerBound])
-            guard let rMatch = rowAttrs.range(of: "r=\\""),
-                  let rEnd = rowAttrs.range(of: "\\"", range: rMatch.upperBound..<rowAttrs.endIndex),
+            guard let rMatch = rowAttrs.range(of: "r=\""),
+                  let rEnd = rowAttrs.range(of: "\"", range: rMatch.upperBound..<rowAttrs.endIndex),
                   let rowNum = Int(rowAttrs[rMatch.upperBound..<rEnd.lowerBound]) else { continue }
             
             var rowHeight: CGFloat = 20
-            if let htMatch = rowAttrs.range(of: "ht=\\""),
-               let htEnd = rowAttrs.range(of: "\\"", range: htMatch.upperBound..<rowAttrs.endIndex),
+            if let htMatch = rowAttrs.range(of: "ht=\""),
+               let htEnd = rowAttrs.range(of: "\"", range: htMatch.upperBound..<rowAttrs.endIndex),
                let ht = Double(rowAttrs[htMatch.upperBound..<htEnd.lowerBound]) {
                 rowHeight = CGFloat(ht)
             }
@@ -635,18 +635,18 @@ struct PDFGenerator {
                 let cellAttrs = String(cc[cc.startIndex..<cellEndIdx.lowerBound])
                 let cellBody = String(cc[cellEndIdx.upperBound..<cellEnd.upperBound])
                 
-                guard let crMatch = cellAttrs.range(of: "r=\\""),
-                      let crEnd = cellAttrs.range(of: "\\"", range: crMatch.upperBound..<cellAttrs.endIndex) else { continue }
+                guard let crMatch = cellAttrs.range(of: "r=\""),
+                      let crEnd = cellAttrs.range(of: "\"", range: crMatch.upperBound..<cellAttrs.endIndex) else { continue }
                 let cellRef = String(cellAttrs[crMatch.upperBound..<crEnd.lowerBound])
                 let (col, _) = parseCellRef(cellRef)
                 
                 var styleId = 0
-                if let sMatch = cellAttrs.range(of: "s=\\""),
-                   let sEnd = cellAttrs.range(of: "\\"", range: sMatch.upperBound..<cellAttrs.endIndex) {
+                if let sMatch = cellAttrs.range(of: "s=\""),
+                   let sEnd = cellAttrs.range(of: "\"", range: sMatch.upperBound..<cellAttrs.endIndex) {
                     styleId = Int(cellAttrs[sMatch.upperBound..<sEnd.lowerBound]) ?? 0
                 }
                 
-                let isShared = cellBody.contains("t=\\"s\\"") || cellAttrs.contains("t=\\"s\\"")
+                let isShared = cellBody.contains("t=\"s\"") || cellAttrs.contains("t=\"s\"")
                 var text = ""
                 if let vStart = cellBody.range(of: "<v>"), let vEnd = cellBody.range(of: "</v>") {
                     let val = String(cellBody[vStart.upperBound..<vEnd.lowerBound])
