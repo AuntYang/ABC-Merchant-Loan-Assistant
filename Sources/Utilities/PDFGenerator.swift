@@ -379,6 +379,298 @@ struct PDFGenerator {
         return idx - 1
     }
 
+
+    // MARK: - XLSX Formatted Table Renderer
+
+    /// Render an xlsx file as a properly formatted table in the PDF context.
+    /// Handles column widths, merge cells, borders, and cell styles.
+    static func renderXlsxAsFormattedTable(_ data: Data, customer: Customer, in context: UIGraphicsPDFRendererContext) {
+        guard let result = parseXlsxStructured(data, customer: customer) else { return }
+        let pageW: CGFloat = 595.2
+        let pageH: CGFloat = 841.8
+        let marginX: CGFloat = 30
+        let marginTop: CGFloat = 40
+        let marginBottom: CGFloat = 40
+        let contentW = pageW - marginX * 2
+        
+        // Scale columns to fit page width
+        let totalWidth = result.colWidths.reduce(0, +)
+        let scale = totalWidth > 0 ? contentW / totalWidth : 1.0
+        
+        // Build column x-positions
+        var colXs: [CGFloat] = [0]
+        for w in result.colWidths {
+            colXs.append(colXs.last! + w * scale)
+        }
+        
+        // Build merge lookup: cell -> merge rect
+        var mergeMap: [String: (col: Int, row: Int, colSpan: Int, rowSpan: Int)] = [:]
+        for m in result.merges {
+            let parts = m.components(separatedBy: ":")
+            guard parts.count == 2 else { continue }
+            let (c1, r1) = parseCellRef(parts[0])
+            let (c2, r2) = parseCellRef(parts[1])
+            let colSpan = c2 - c1 + 1
+            let rowSpan = r2 - r1 + 1
+            // Mark all cells in merge range (except top-left as hidden)
+            for mc in c1...c2 {
+                for mr in r1...r2 {
+                    let key = "\\(mc),\\(mr)"
+                    if mc == c1 && mr == r1 {
+                        mergeMap[key] = (c1, r1, colSpan, rowSpan)
+                    } else {
+                        mergeMap[key] = (c1, r1, -colSpan, -rowSpan) // negative = hidden
+                    }
+                }
+            }
+        }
+        
+        // Assign row heights
+        var rowHeights: [Int: CGFloat] = [:]
+        for row in result.rows {
+            rowHeights[row.row] = row.height > 0 ? row.height : 20
+        }
+        
+        // Calculate total table height and find page break points
+        var rowYPositions: [Int: CGFloat] = [:]
+        var y: CGFloat = 0
+        let maxRow = result.rows.map { $0.row }.max() ?? 0
+        for r in 1...maxRow {
+            rowYPositions[r] = y
+            y += rowHeights[r] ?? 20
+        }
+        let totalHeight = y
+        
+        // Render table in pages
+        var currentRow = 1
+        while currentRow <= maxRow {
+            context.beginPage()
+            let pageStartY = rowYPositions[currentRow] ?? 0
+            let availableH = pageH - marginTop - marginBottom
+            
+            // Find how many rows fit on this page
+            var endRow = currentRow
+            for r in currentRow...maxRow {
+                let ry = (rowYPositions[r] ?? 0) - pageStartY
+                let rh = rowHeights[r] ?? 20
+                if ry + rh <= availableH {
+                    endRow = r
+                } else { break }
+            }
+            
+            // Draw rows for this page
+            for row in result.rows where row.row >= currentRow && row.row <= endRow {
+                let ry = marginTop + ((rowYPositions[row.row] ?? 0) - pageStartY)
+                let rh = rowHeights[row.row] ?? 20
+                
+                // Draw each cell
+                for cell in row.cells {
+                    let key = "\\(cell.col),\\(cell.row)"
+                    guard let merge = mergeMap[key] else {
+                        // Regular cell
+                        let cx = marginX + colXs[cell.col]
+                        let cw = (cell.col < result.colWidths.count ? result.colWidths[cell.col] : 50) * scale
+                        drawTableCell(cell.text, rect: CGRect(x: cx, y: ry, width: cw, height: rh), borderId: cell.borderId, in: context)
+                        continue
+                    }
+                    
+                    if merge.colSpan > 0 {
+                        // Top-left of merge: draw with merged rect
+                        let cx = marginX + colXs[merge.col]
+                        let cw = colXs[merge.col + merge.colSpan] - colXs[merge.col]
+                        drawTableCell(cell.text, rect: CGRect(x: cx, y: ry, width: cw, height: rh), borderId: cell.borderId, in: context)
+                    }
+                    // Skip non-top-left merged cells
+                }
+            }
+            
+            currentRow = endRow + 1
+        }
+    }
+
+    private static func drawTableCell(_ text: String, rect: CGRect, borderId: Int, in context: UIGraphicsPDFRendererContext) {
+        let ctx = context.cgContext
+        let padding: CGFloat = 3
+        
+        // Draw borders based on borderId
+        let borders = getBorderSides(for: borderId)
+        ctx.setStrokeColor(UIColor.black.cgColor)
+        ctx.setLineWidth(0.5)
+        if borders.top {
+            ctx.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            ctx.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            ctx.strokePath()
+        }
+        if borders.bottom {
+            ctx.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            ctx.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            ctx.strokePath()
+        }
+        if borders.left {
+            ctx.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            ctx.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            ctx.strokePath()
+        }
+        if borders.right {
+            ctx.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+            ctx.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            ctx.strokePath()
+        }
+        
+        // Draw text
+        if !text.isEmpty {
+            let font = UIFont.systemFont(ofSize: 9)
+            let para = NSMutableParagraphStyle()
+            para.lineBreakMode = .byWordWrapping
+            para.alignment = .left
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: para]
+            let textRect = rect.insetBy(dx: padding, dy: padding)
+            (text as NSString).draw(in: textRect, withAttributes: attrs)
+        }
+    }
+
+    private struct BorderSides { var top: Bool; var bottom: Bool; var left: Bool; var right: Bool }
+    private static var borderCache: [Int: BorderSides] = [:]
+    private static func getBorderSides(for borderId: Int) -> BorderSides {
+        if let cached = borderCache[borderId] { return cached }
+        // Default: all thin borders for non-zero borderId
+        let result: BorderSides
+        if borderId == 0 {
+            result = BorderSides(top: false, bottom: false, left: false, right: false)
+        } else {
+            result = BorderSides(top: true, bottom: true, left: true, right: true)
+        }
+        borderCache[borderId] = result
+        return result
+    }
+
+    private static func parseCellRef(_ ref: String) -> (col: Int, row: Int) {
+        let colStr = ref.prefix(while: { $0.isLetter })
+        let rowStr = ref.drop(while: { $0.isLetter })
+        return (colIndex(colStr) ?? 0, Int(rowStr) ?? 0)
+    }
+
+    /// Parsed xlsx cell
+    private struct XlsxCell { let col: Int; let row: Int; var text: String; var borderId: Int }
+    private struct XlsxRow { let row: Int; let height: CGFloat; let cells: [XlsxCell] }
+    private struct XlsxParseResult { let colWidths: [CGFloat]; let rows: [XlsxRow]; let merges: [String] }
+
+    /// Parse xlsx into structured data with formatting info.
+    private static func parseXlsxStructured(_ data: Data, customer: Customer? = nil) -> XlsxParseResult? {
+        let bytes = [UInt8](data)
+        guard bytes.count > 4, bytes[0] == 0x50, bytes[1] == 0x4B else { return nil }
+        
+        guard let ssXML = extractXMLFromZip(data, entryName: "xl/sharedStrings.xml") else { return nil }
+        let sharedStrings = parseXlsxSharedStrings(ssXML)
+        var finalStrings = sharedStrings         if let customer = customer {             let values = customer.autoTemplateValues()             for i in 0..<finalStrings.count {                 for (key, value) in values {                     finalStrings[i] = finalStrings[i].replacingOccurrences(of: "{{" + key + "}}", with: value)                 }             }         }
+        
+        // Try sheet1 first
+        guard var sheetXML = extractXMLFromZip(data, entryName: "xl/worksheets/sheet1.xml") else { return nil }
+        
+        // Parse column widths
+        var colWidths: [CGFloat] = [60, 60, 60, 60] // default
+        if let colsMatch = sheetXML.range(of: "<cols>", range: sheetXML.startIndex..<sheetXML.endIndex),
+           let colsEnd = sheetXML.range(of: "</cols>", range: colsMatch.upperBound..<sheetXML.endIndex) {
+            let colsStr = String(sheetXML[colsMatch.upperBound..<colsEnd.lowerBound])
+            let colDefs = colsStr.components(separatedBy: "<col ")
+            var widths: [Int: CGFloat] = [:]
+            for cd in colDefs.dropFirst() {
+                guard let minR = cd.range(of: "min=\\""), let minE = cd.range(of: "\\"", range: minR.upperBound..<cd.endIndex) else { continue }
+                guard let maxR = cd.range(of: "max=\\""), let maxE = cd.range(of: "\\"", range: maxR.upperBound..<cd.endIndex) else { continue }
+                guard let wR = cd.range(of: "width=\\""), let wE = cd.range(of: "\\"", range: wR.upperBound..<cd.endIndex) else { continue }
+                guard let minC = Int(cd[minR.upperBound..<minE.lowerBound]),
+                      let maxC = Int(cd[maxR.upperBound..<maxE.lowerBound]),
+                      let w = Double(cd[wR.upperBound..<wE.lowerBound]) else { continue }
+                let pts = CGFloat(w) * 7 + 5
+                for c in minC...maxC { widths[c] = pts }
+            }
+            if !widths.isEmpty {
+                let maxCol = widths.keys.max() ?? 4
+                colWidths = (1...maxCol).map { widths[$0] ?? 60 }
+            }
+        }
+        
+        // Parse merge cells
+        var merges: [String] = []
+        if let mcMatch = sheetXML.range(of: "<mergeCells", range: sheetXML.startIndex..<sheetXML.endIndex),
+           let mcEnd = sheetXML.range(of: "</mergeCells>", range: mcMatch.upperBound..<sheetXML.endIndex) {
+            let mcStr = String(sheetXML[mcMatch.upperBound..<mcEnd.lowerBound])
+            let refs = mcStr.components(separatedBy: "mergeCell ref=\\"")
+            for r in refs.dropFirst() {
+                guard let endQ = r.range(of: "\\"") else { continue }
+                merges.append(String(r[r.startIndex..<endQ.lowerBound]))
+            }
+        }
+        
+        // Parse rows and cells
+        var rows: [XlsxRow] = []
+        let rowComponents = sheetXML.components(separatedBy: "<row ")
+        for rc in rowComponents.dropFirst() {
+            guard let rowEndTag = rc.range(of: ">") else { continue }
+            let rowAttrs = String(rc[rc.startIndex..<rowEndTag.lowerBound])
+            guard let rMatch = rowAttrs.range(of: "r=\\""),
+                  let rEnd = rowAttrs.range(of: "\\"", range: rMatch.upperBound..<rowAttrs.endIndex),
+                  let rowNum = Int(rowAttrs[rMatch.upperBound..<rEnd.lowerBound]) else { continue }
+            
+            var rowHeight: CGFloat = 20
+            if let htMatch = rowAttrs.range(of: "ht=\\""),
+               let htEnd = rowAttrs.range(of: "\\"", range: htMatch.upperBound..<rowAttrs.endIndex),
+               let ht = Double(rowAttrs[htMatch.upperBound..<htEnd.lowerBound]) {
+                rowHeight = CGFloat(ht)
+            }
+            
+            var cells: [XlsxCell] = []
+            let cellComps = rc.components(separatedBy: "<c ")
+            for cc in cellComps.dropFirst() {
+                let cellEnd = cc.range(of: "</c>") ?? cc.range(of: "/>") ?? cc.endIndex...
+                guard let cellEndIdx = cc.range(of: ">") else { continue }
+                let cellAttrs = String(cc[cc.startIndex..<cellEndIdx.lowerBound])
+                let cellBody = String(cc[cellEndIdx.upperBound..<cellEnd.upperBound])
+                
+                guard let crMatch = cellAttrs.range(of: "r=\\""),
+                      let crEnd = cellAttrs.range(of: "\\"", range: crMatch.upperBound..<cellAttrs.endIndex) else { continue }
+                let cellRef = String(cellAttrs[crMatch.upperBound..<crEnd.lowerBound])
+                let (col, _) = parseCellRef(cellRef)
+                
+                var styleId = 0
+                if let sMatch = cellAttrs.range(of: "s=\\""),
+                   let sEnd = cellAttrs.range(of: "\\"", range: sMatch.upperBound..<cellAttrs.endIndex) {
+                    styleId = Int(cellAttrs[sMatch.upperBound..<sEnd.lowerBound]) ?? 0
+                }
+                
+                let isShared = cellBody.contains("t=\\"s\\"") || cellAttrs.contains("t=\\"s\\"")
+                var text = ""
+                if let vStart = cellBody.range(of: "<v>"), let vEnd = cellBody.range(of: "</v>") {
+                    let val = String(cellBody[vStart.upperBound..<vEnd.lowerBound])
+                    if isShared, let idx = Int(val), idx < sharedStrings.count {
+                        text = sharedStrings[idx]
+                    } else {
+                        text = val
+                    }
+                } else if let isStart = cellBody.range(of: "<is>"), let isEnd = cellBody.range(of: "</is>") {
+                    let isContent = String(cellBody[isStart.upperBound..<isEnd.lowerBound])
+                    if let tStart = isContent.range(of: "<t"), let tEnd = isContent.range(of: "</t>") {
+                        let afterT = isContent[tStart.upperBound...]
+                        if let cb = afterT.range(of: ">") {
+                            text = String(afterT[cb.upperBound..<tEnd.lowerBound])
+                        }
+                    }
+                }
+                
+                // Get border ID from style
+                var borderId = 0
+                // Style parsing would need full XML parsing of styles.xml
+                // For now, use a simple heuristic: most cells have borders
+                if styleId > 0 { borderId = 4 } // default thin-all
+                
+                cells.append(XlsxCell(col: col, row: rowNum, text: text, borderId: borderId))
+            }
+            rows.append(XlsxRow(row: rowNum, height: rowHeight, cells: cells))
+        }
+        
+        return XlsxParseResult(colWidths: colWidths, rows: rows, merges: merges)
+    }
+
     private static func extractTextFromRawXML(_ data: Data) -> String? {
         let bodyStart = "<w:body".data(using: .utf8)!
         let bodyEnd = "</w:body>".data(using: .utf8)!
@@ -650,13 +942,30 @@ struct PDFGenerator {
                 debugLines.append("\(isTemplate ? "[TPL]" : "[DOC]") \(docItem.fileName) type=\(docItem.documentType) size=\(data.count)")
                 
                 if isTemplate {
-                    let extractedText = extractTextFromDocx(data)
-                    if let text = extractedText, !text.isEmpty {
-                        let filled = fillPlaceholders(in: text, customer: customer)
-                        let title = DocumentTypeRegistry.getType(byId: docItem.documentType)?.name
-                        debugLines.append("  -> OK: \(text.count) chars")
-                        renderTextAsPDFPages(filled, title: title, in: context)
+                    // Check if xlsx file - use formatted table renderer
+                    let isXlsx = data.count > 4 && data[0] == 0x50 && data[1] == 0x4B
+                    if isXlsx {
+                        // Fill placeholders in shared strings first, then render as table
+                        if let filledData = fillXlsxPlaceholders(data, customer: customer) {
+                            renderXlsxAsFormattedTable(filledData, customer: customer, in: context)
+                            debugLines.append("  -> Rendered as formatted table")
+                        } else {
+                            renderXlsxAsFormattedTable(data, customer: customer, in: context)
+                            debugLines.append("  -> Rendered as table (placeholder fill failed)")
+                        }
                     } else {
+                        let extractedText = extractTextFromDocx(data)
+                        if let text = extractedText, !text.isEmpty {
+                            let filled = fillPlaceholders(in: text, customer: customer)
+                            let title = DocumentTypeRegistry.getType(byId: docItem.documentType)?.name
+                            debugLines.append("  -> OK: \(text.count) chars")
+                            renderTextAsPDFPages(filled, title: title, in: context)
+                        } else {
+                            debugLines.append("  -> Extract FAILED, appending raw")
+                            appendDocData(data, fileName: docItem.fileName, in: context)
+                        }
+                    }
+                } else {
                         debugLines.append("  -> Extract FAILED, appending raw")
                         appendDocData(data, fileName: docItem.fileName, in: context)
                     }
@@ -670,4 +979,3 @@ struct PDFGenerator {
             renderTextAsPDFPages(debugText, title: "Debug Info", in: context)
         }
     }
-}
