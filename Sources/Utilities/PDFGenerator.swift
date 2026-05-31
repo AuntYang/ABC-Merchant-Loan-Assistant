@@ -163,7 +163,7 @@ struct PDFGenerator {
             guard let srcPtr = srcRaw.baseAddress else { return -1 }
             return dstBuf.withUnsafeMutableBytes { (_ dstRaw: UnsafeMutableRawBufferPointer) -> Int in
                 guard let dstPtr = dstRaw.baseAddress else { return -1 }
-                var stream = compression_stream()
+                var stream = compression_stream(dst_ptr: nil, dst_size: 0, src_ptr: nil, src_size: 0, state: nil)
                 var status = compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB)
                 guard status == COMPRESSION_STATUS_OK else { return -1 }
                 defer { compression_stream_destroy(&stream) }
